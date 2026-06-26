@@ -110,7 +110,7 @@ run_deep_diagnostics() {
 
     # 4. Qdrant REST Collections
     local qdrant_code
-    qdrant_code=$(docker compose exec -T app curl -s -o /dev/null -w "%{http_code}" http://qdrant:6333/collections || echo "000")
+    qdrant_code=$(docker compose exec -T app curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" http://qdrant:6333/collections || echo "000")
     if [ "$qdrant_code" = "200" ]; then
         audit_health_status "Qdrant Vector DB" "ok" "REST API resolved HTTP 200"
     else
@@ -120,7 +120,7 @@ run_deep_diagnostics() {
 
     # 5. MinIO Object Storage
     local minio_code
-    minio_code=$(docker compose exec -T app curl -s -o /dev/null -w "%{http_code}" http://minio:9000/minio/health/live || echo "000")
+    minio_code=$(docker compose exec -T app curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" http://minio:9000/minio/health/live || echo "000")
     if [ "$minio_code" = "200" ]; then
         audit_health_status "MinIO S3 Storage" "ok" "Live check resolved HTTP 200"
     else
@@ -130,7 +130,7 @@ run_deep_diagnostics() {
 
     # 6. Laravel health endpoint (/api/health)
     local app_code
-    app_code=$(docker compose exec -T app curl -s -o /dev/null -w "%{http_code}" http://web/api/health || echo "000")
+    app_code=$(docker compose exec -T app curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" http://web/api/health || echo "000")
     if [ "$app_code" = "200" ]; then
         audit_health_status "Laravel App Routing" "ok" "HTTP health check endpoint is live"
     else
@@ -174,7 +174,7 @@ run_deep_diagnostics() {
     # 10. OpenAI connectivity & Embeddings
     if [ -n "$openai_key" ]; then
         local openai_code
-        openai_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        openai_code=$(curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" \
             -H "Authorization: Bearer $openai_key" \
             https://api.openai.com/v1/models || echo "000")
         if [ "$openai_code" = "200" ]; then
