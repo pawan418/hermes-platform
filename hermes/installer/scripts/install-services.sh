@@ -18,7 +18,17 @@ DOCKER_LOG="logs/docker.log"
 setup_filesystem_permissions() {
     log_info "Verifying and configuring filesystem permissions..." "$LOG_FILE"
     
-    local dirs=(storage bootstrap/cache uploads knowledge logs)
+    local dirs=(
+        storage
+        storage/framework/cache
+        storage/framework/sessions
+        storage/framework/views
+        storage/logs
+        bootstrap/cache
+        uploads
+        knowledge
+        logs
+    )
     
     for dir in "${dirs[@]}"; do
         if [ ! -d "$dir" ]; then
