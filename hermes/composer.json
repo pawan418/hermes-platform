@@ -21,7 +21,7 @@
         "nunomaduro/collision": "^8.1",
         "pestphp/pest": "^3.0",
         "pestphp/pest-plugin-laravel": "^3.0",
-        "phpstan/phpstan": "^1.10",
+        "phpstan/phpstan": "^2.0",
         "spatie/laravel-ignition": "^2.4"
     },
     "autoload": {
