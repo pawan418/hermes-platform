@@ -109,7 +109,7 @@ run_step_with_recovery() {
     print_step_progress "$step_no" "$step_name"
     
     while true; do
-        if eval "$step_command" >> "$LOG_FILE" 2>&1; then
+        if eval "$step_command"; then
             break
         else
             handle_step_failure "$step_no"
