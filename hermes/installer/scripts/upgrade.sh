@@ -79,10 +79,10 @@ docker compose up -d >> "$LOG_FILE" 2>&1
 log_info "Verifying dependencies installation..." "$LOG_FILE"
 if [ ! -d "vendor" ]; then
     log_info "Vendor folder missing. Installing Composer packages..." "$LOG_FILE"
-    docker compose exec -T --user www-data app composer install --no-interaction --optimize-autoloader >> "$LOG_FILE" 2>&1
+    docker compose exec -T --user root app composer install --no-interaction --optimize-autoloader >> "$LOG_FILE" 2>&1
 else
     log_info "Vendor folder exists. Executing autoloader optimizations..." "$LOG_FILE"
-    docker compose exec -T --user www-data app composer dump-autoload --no-interaction --optimize >> "$LOG_FILE" 2>&1
+    docker compose exec -T --user root app composer dump-autoload --no-interaction --optimize >> "$LOG_FILE" 2>&1
     docker compose exec -T --user www-data app php artisan optimize --no-interaction >> "$LOG_FILE" 2>&1
 fi
 

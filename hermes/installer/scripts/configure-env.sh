@@ -222,7 +222,7 @@ N8N_URL=http://localhost:5678
 SCOUT_DRIVER=${scout_driver}
 EOF
 
-    chmod 600 .env
+    chmod 644 .env
     log_info "Configured .env file successfully with permissions 0600." "$LOG_FILE"
 }
 

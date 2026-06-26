@@ -110,7 +110,7 @@ run_artisan() {
 run_composer() {
     local t_flag="-it"
     if [ ! -t 0 ] || [ ! -t 1 ]; then t_flag="-T"; fi
-    docker compose exec $t_flag --user www-data app composer "$@"
+    docker compose exec $t_flag --user root app composer "$@"
 }
 
 run_npm() {

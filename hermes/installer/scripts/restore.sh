@@ -116,7 +116,7 @@ extract_host_directory "knowledge" "${TEMP_DIR}/knowledge_data.tar.gz" "$LOG_FIL
 
 # Copy configurations
 cp "${TEMP_DIR}/.env" .env
-chmod 600 .env
+chmod 644 .env
 log_info "Environment .env file restored." "$LOG_FILE"
 
 # 4. Start database container and wait for queries

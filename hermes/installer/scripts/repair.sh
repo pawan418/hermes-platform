@@ -55,7 +55,7 @@ for dir in "${dirs[@]}"; do
 done
 
 if [ -f .env ]; then
-    chmod 600 .env
+    chmod 644 .env
 fi
 log_info "Permissions verified." "$LOG_FILE"
 

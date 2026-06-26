@@ -61,11 +61,11 @@ configure_php_dependencies() {
     
     if [ ! -d "vendor" ]; then
         log_info "Vendor directory not found. Executing fresh composer install..." "$LOG_FILE"
-        docker compose exec -T --user www-data app composer install --no-interaction --optimize-autoloader >> "$DOCKER_LOG" 2>&1
+        docker compose exec -T --user root app composer install --no-interaction --optimize-autoloader >> "$DOCKER_LOG" 2>&1
         log_info "Composer packages installed." "$LOG_FILE"
     else
         log_info "Vendor directory exists. Running light dependency optimization..." "$LOG_FILE"
-        docker compose exec -T --user www-data app composer dump-autoload --no-interaction --optimize >> "$DOCKER_LOG" 2>&1
+        docker compose exec -T --user root app composer dump-autoload --no-interaction --optimize >> "$DOCKER_LOG" 2>&1
         docker compose exec -T --user www-data app php artisan optimize --no-interaction >> "$DOCKER_LOG" 2>&1
         log_info "Composer autoloader optimized." "$LOG_FILE"
     fi
