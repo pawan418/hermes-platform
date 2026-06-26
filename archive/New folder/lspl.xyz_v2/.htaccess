@@ -1,0 +1,22 @@
+Options -MultiViews
+RewriteEngine On
+RewriteBase /lspl.xyz_v2/
+
+# Route /service/some-slug to /service.php?slug=some-slug
+RewriteRule ^service/([^/]+)/?$ service.php?slug=$1 [L,QSA]
+
+# Route /page/some-slug to /page.php?slug=some-slug
+RewriteRule ^page/([^/]+)/?$ page.php?slug=$1 [L,QSA]
+
+# Route /blog to /blog.php
+RewriteRule ^blog/?$ blog.php [L,QSA]
+# Route /estimator to /estimator.php
+RewriteRule ^estimator/?$ estimator.php [L,QSA]
+# Route /services to /services.php
+RewriteRule ^services/?$ services.php [L,QSA]
+# Route /solutions to /solutions.php
+RewriteRule ^solutions/?$ solutions.php [L,QSA]
+
+
+# Route /blog/some-slug to /blog_post.php?slug=some-slug
+RewriteRule ^blog/([^/]+)/?$ blog_post.php?slug=$1 [L,QSA]

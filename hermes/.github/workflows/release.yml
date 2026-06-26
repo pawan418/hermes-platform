@@ -1,0 +1,42 @@
+name: Release Validation & Bundling
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
+
+    - name: Run ShellCheck on Installation Toolkit
+      uses: ludeeus/action-shellcheck@master
+      with:
+        scandir: 'installer'
+
+    - name: Read Platform Version
+      id: get_version
+      run: |
+        VERSION=$(cat installer/VERSION | tr -d '\r\n')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Package Enterprise Installer Archive
+      run: |
+        mkdir -p dist
+        tar -czf dist/hermes-enterprise-installer-${{ steps.get_version.outputs.version }}.tar.gz \
+          INSTALL.md BACKUP.md RESTORE.md UPGRADE.md TROUBLESHOOTING.md \
+          docker-compose.yml docker/ installer/
+
+    - name: Create draft GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/hermes-enterprise-installer-${{ steps.get_version.outputs.version }}.tar.gz
+        draft: true
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

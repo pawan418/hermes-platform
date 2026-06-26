@@ -1,0 +1,226 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    container_name: hermes-app
+    restart: unless-stopped
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+    environment:
+      - APP_ENV=${APP_ENV:-local}
+      - APP_KEY=${APP_KEY}
+      - APP_DEBUG=${APP_DEBUG:-true}
+      - DB_CONNECTION=pgsql
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_DATABASE=${DB_DATABASE:-hermes}
+      - DB_USERNAME=${DB_USERNAME:-hermes}
+      - DB_PASSWORD=${DB_PASSWORD:-hermes_secure_pass}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CACHE_STORE=redis
+      - QUEUE_CONNECTION=redis
+      - SESSION_DRIVER=redis
+    networks:
+      - hermes-network
+    depends_on:
+      - db
+      - redis
+
+  web:
+    image: nginx:alpine
+    container_name: hermes-web
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:80"
+    volumes:
+      - ./:/var/www
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    networks:
+      - hermes-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      - app
+
+  db:
+    image: postgres:16-alpine
+    container_name: hermes-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-hermes}
+      POSTGRES_USER: ${DB_USERNAME:-hermes}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-hermes_secure_pass}
+    ports:
+      - "${DB_PORT_EXPOSE:-5432}:5432"
+    volumes:
+      - hermes-db:/var/lib/postgresql/data
+    networks:
+      - hermes-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-hermes} -d ${DB_DATABASE:-hermes}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: hermes-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT_EXPOSE:-6379}:6379"
+    volumes:
+      - hermes-redis:/data
+    networks:
+      - hermes-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: hermes-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "6334:6334"
+    volumes:
+      - hermes-qdrant:/qdrant/storage
+    networks:
+      - hermes-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/collections || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: hermes-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-hermes_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-hermes_minio_pass}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - hermes-minio:/data
+    networks:
+      - hermes-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: hermes-n8n
+    restart: unless-stopped
+    environment:
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_METRICS=true
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-n8n_secure_encryption_key}
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    volumes:
+      - hermes-n8n:/home/node/.n8n
+    networks:
+      - hermes-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5678/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      - db
+      - redis
+
+  queue:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    container_name: hermes-queue
+    restart: unless-stopped
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+    command: php artisan queue:work redis --sleep=3 --tries=3
+    environment:
+      - APP_ENV=${APP_ENV:-local}
+      - APP_KEY=${APP_KEY}
+      - DB_CONNECTION=pgsql
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_DATABASE=${DB_DATABASE:-hermes}
+      - DB_USERNAME=${DB_USERNAME:-hermes}
+      - DB_PASSWORD=${DB_PASSWORD:-hermes_secure_pass}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUEUE_CONNECTION=redis
+    networks:
+      - hermes-network
+    depends_on:
+      - db
+      - redis
+      - app
+
+  scheduler:
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    container_name: hermes-scheduler
+    restart: unless-stopped
+    working_dir: /var/www
+    volumes:
+      - ./:/var/www
+    command: php artisan schedule:work
+    environment:
+      - APP_ENV=${APP_ENV:-local}
+      - APP_KEY=${APP_KEY}
+      - DB_CONNECTION=pgsql
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_DATABASE=${DB_DATABASE:-hermes}
+      - DB_USERNAME=${DB_USERNAME:-hermes}
+      - DB_PASSWORD=${DB_PASSWORD:-hermes_secure_pass}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - QUEUE_CONNECTION=redis
+    networks:
+      - hermes-network
+    depends_on:
+      - db
+      - redis
+      - app
+
+networks:
+  hermes-network:
+    driver: bridge
+
+volumes:
+  hermes-db:
+    driver: local
+  hermes-redis:
+    driver: local
+  hermes-qdrant:
+    driver: local
+  hermes-minio:
+    driver: local
+  hermes-n8n:
+    driver: local

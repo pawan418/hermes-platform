@@ -1,0 +1,1729 @@
+<?php
+// lspl.xyz/admin.php - Secure administration panel for managing LSPL Academy
+require_once __DIR__ . '/db.php';
+
+session_start();
+
+// Auth check
+if (!isset($_SESSION['lspl_xyz_admin_logged_in']) || $_SESSION['lspl_xyz_admin_logged_in'] !== true) {
+    header('Location: login.php');
+    exit;
+}
+
+// Handle AJAX requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+    if ($_POST['action'] === 'ajax_upload_logo') {
+        header('Content-Type: application/json');
+        $response = ['success' => false, 'message' => ''];
+        try {
+            $field = $_POST['field'] ?? 'logo';
+            if (isset($_FILES[$field]) && $_FILES[$field]['error'] === UPLOAD_ERR_OK) {
+                if (strpos($_FILES[$field]['type'], 'image/') === 0) {
+                    $filename = 'logo.png';
+                    if ($field === 'logo_light') {
+                        $filename = 'logo-light.png';
+                    } elseif ($field === 'logo_dark') {
+                        $filename = 'logo-dark.png';
+                    }
+                    if (move_uploaded_file($_FILES[$field]['tmp_name'], __DIR__ . '/' . $filename)) {
+                        $response['success'] = true;
+                        $response['url'] = $filename . '?v=' . time();
+                    } else {
+                        $response['message'] = 'Failed to save uploaded file.';
+                    }
+                } else {
+                    $response['message'] = 'Uploaded file must be a valid image.';
+                }
+            } else {
+                $response['message'] = 'File upload failed.';
+            }
+        } catch (Exception $e) {
+            $response['message'] = $e->getMessage();
+        }
+        echo json_encode($response);
+        exit;
+    } elseif ($_POST['action'] === 'update_menu_order') {
+        header('Content-Type: application/json');
+        $response = ['success' => false, 'message' => ''];
+        try {
+            $order_data = json_decode($_POST['order_data'], true);
+            if (is_array($order_data)) {
+                $db->beginTransaction();
+                $stmt = $db->prepare("UPDATE header_menu_items SET parent_id = ?, display_order = ? WHERE id = ?");
+                foreach ($order_data as $item) {
+                    $parent_id = ($item['parent_id'] === 'null' || $item['parent_id'] === null || $item['parent_id'] === '') ? null : (int)$item['parent_id'];
+                    $stmt->execute([$parent_id, (int)$item['display_order'], (int)$item['id']]);
+                }
+                $db->commit();
+                $response['success'] = true;
+            } else {
+                $response['message'] = 'Invalid order data.';
+            }
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
+            }
+            $response['message'] = $e->getMessage();
+        }
+        echo json_encode($response);
+        exit;
+    }
+}
+
+
+$current_tab = isset($_GET['tab']) ? $_GET['tab'] : 'leads';
+$success_message = '';
+$error_message = '';
+
+// Handle actions
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = isset($_POST['action']) ? $_POST['action'] : '';
+
+    try {
+        if ($action === 'update_lead_status') {
+            $lead_id = (int)$_POST['lead_id'];
+            $status = $_POST['status'];
+            
+            $stmt = $db->prepare("UPDATE leads SET status = ? WHERE id = ?");
+            $stmt->execute([$status, $lead_id]);
+            $success_message = "Registration status updated successfully.";
+
+        } elseif ($action === 'delete_lead') {
+            $lead_id = (int)$_POST['lead_id'];
+            
+            $stmt = $db->prepare("DELETE FROM leads WHERE id = ?");
+            $stmt->execute([$lead_id]);
+            $success_message = "Lead deleted successfully.";
+
+        } elseif ($action === 'add_service') { // Add Course
+            $title = trim($_POST['title']);
+            $description = trim($_POST['description']);
+            $icon = trim($_POST['icon']);
+            $category = trim($_POST['category']);
+            $tech_stack = trim($_POST['tech_stack']);
+            $display_order = (int)$_POST['display_order'];
+
+            $stmt = $db->prepare("
+                INSERT INTO services (title, description, icon, category, tech_stack, display_order)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([$title, $description, $icon, $category, $tech_stack, $display_order]);
+            $success_message = "New course program added successfully.";
+
+        } elseif ($action === 'edit_service') { // Edit Course
+            $id = (int)$_POST['service_id'];
+            $title = trim($_POST['title']);
+            $description = trim($_POST['description']);
+            $icon = trim($_POST['icon']);
+            $category = trim($_POST['category']);
+            $tech_stack = trim($_POST['tech_stack']);
+            $display_order = (int)$_POST['display_order'];
+
+            $stmt = $db->prepare("
+                UPDATE services 
+                SET title = ?, description = ?, icon = ?, category = ?, tech_stack = ?, display_order = ?
+                WHERE id = ?
+            ");
+            $stmt->execute([$title, $description, $icon, $category, $tech_stack, $display_order, $id]);
+            $success_message = "Course program updated successfully.";
+
+        } elseif ($action === 'delete_service') {
+            $id = (int)$_POST['service_id'];
+            
+            $stmt = $db->prepare("DELETE FROM services WHERE id = ?");
+            $stmt->execute([$id]);
+            $success_message = "Course program deleted successfully.";
+
+        } elseif ($action === 'add_page') {
+            $title = trim($_POST['title']);
+            $slug = trim($_POST['slug']);
+            $content = trim($_POST['content']);
+            $display_in_nav = isset($_POST['display_in_nav']) ? (int)$_POST['display_in_nav'] : 1;
+            $display_order = (int)$_POST['display_order'];
+
+            $stmt = $db->prepare("
+                INSERT INTO pages (title, slug, content, display_in_nav, display_order)
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([$title, $slug, $content, $display_in_nav, $display_order]);
+            $success_message = "Custom page added successfully.";
+
+        } elseif ($action === 'edit_page') {
+            $id = (int)$_POST['page_id'];
+            $title = trim($_POST['title']);
+            $slug = trim($_POST['slug']);
+            $content = trim($_POST['content']);
+            $display_in_nav = (int)$_POST['display_in_nav'];
+            $display_order = (int)$_POST['display_order'];
+
+            $stmt = $db->prepare("
+                UPDATE pages 
+                SET title = ?, slug = ?, content = ?, display_in_nav = ?, display_order = ?
+                WHERE id = ?
+            ");
+            $stmt->execute([$title, $slug, $content, $display_in_nav, $display_order, $id]);
+            $success_message = "Custom page updated successfully.";
+
+        } elseif ($action === 'delete_page') {
+            $id = (int)$_POST['page_id'];
+            
+            $stmt = $db->prepare("DELETE FROM pages WHERE id = ?");
+            $stmt->execute([$id]);
+            $success_message = "Custom page deleted successfully.";
+
+        } elseif ($action === 'add_blog') {
+            $title = trim($_POST['title']);
+            $slug = trim($_POST['slug']);
+            $summary = trim($_POST['summary']);
+            $content = trim($_POST['content']);
+            $author = trim($_POST['author']);
+            $status = trim($_POST['status']);
+
+            $image_url = null;
+            if (isset($_FILES['blog_image']) && $_FILES['blog_image']['error'] === UPLOAD_ERR_OK) {
+                if (strpos($_FILES['blog_image']['type'], 'image/') === 0) {
+                    if (!file_exists(__DIR__ . '/uploads')) {
+                        mkdir(__DIR__ . '/uploads', 0777, true);
+                    }
+                    $ext = pathinfo($_FILES['blog_image']['name'], PATHINFO_EXTENSION);
+                    $filename = 'uploads/blog_' . uniqid() . '.' . $ext;
+                    if (move_uploaded_file($_FILES['blog_image']['tmp_name'], __DIR__ . '/' . $filename)) {
+                        $image_url = $filename;
+                    }
+                }
+            }
+
+            $stmt = $db->prepare("
+                INSERT INTO blogs (title, slug, summary, content, author, status, image_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([$title, $slug, $summary, $content, $author, $status, $image_url]);
+            $success_message = "Blog article created successfully.";
+            } elseif ($action === 'edit_blog') {
+            $id = (int)$_POST['blog_id'];
+            $title = trim($_POST['title']);
+            $slug = trim($_POST['slug']);
+            $summary = trim($_POST['summary']);
+            $content = trim($_POST['content']);
+            $author = trim($_POST['author']);
+            $status = trim($_POST['status']);
+
+            $existing_blog = $db->query("SELECT image_url FROM blogs WHERE id = " . $id)->fetch();
+            $image_url = $existing_blog ? $existing_blog['image_url'] : null;
+
+            if (isset($_FILES['blog_image']) && $_FILES['blog_image']['error'] === UPLOAD_ERR_OK) {
+                if (strpos($_FILES['blog_image']['type'], 'image/') === 0) {
+                    if (!file_exists(__DIR__ . '/uploads')) {
+                        mkdir(__DIR__ . '/uploads', 0777, true);
+                    }
+                    if ($image_url && file_exists(__DIR__ . '/' . $image_url)) {
+                        @unlink(__DIR__ . '/' . $image_url);
+                    }
+                    $ext = pathinfo($_FILES['blog_image']['name'], PATHINFO_EXTENSION);
+                    $filename = 'uploads/blog_' . uniqid() . '.' . $ext;
+                    if (move_uploaded_file($_FILES['blog_image']['tmp_name'], __DIR__ . '/' . $filename)) {
+                        $image_url = $filename;
+                    }
+                }
+            }
+
+            $stmt = $db->prepare("
+                UPDATE blogs 
+                SET title = ?, slug = ?, summary = ?, content = ?, author = ?, status = ?, image_url = ?
+                WHERE id = ?
+            ");
+            $stmt->execute([$title, $slug, $summary, $content, $author, $status, $image_url, $id]);
+            $success_message = "Blog article updated successfully.";
+            } elseif ($action === 'delete_blog') {
+            $id = (int)$_POST['blog_id'];
+            
+            $stmt = $db->prepare("DELETE FROM blogs WHERE id = ?");
+            $stmt->execute([$id]);
+            $success_message = "Blog article deleted successfully.";
+
+        } elseif ($action === 'add_header_menu') {
+            $parent_id = !empty($_POST['parent_id']) ? (int)$_POST['parent_id'] : null;
+            $title = trim($_POST['title']);
+            $link_type = trim($_POST['link_type']);
+            $page_slug = $link_type === 'page' ? trim($_POST['page_slug']) : null;
+            $custom_url = $link_type === 'custom' ? trim($_POST['custom_url']) : null;
+            $menu_type = $parent_id === null ? trim($_POST['menu_type']) : 'single_page';
+            $column_name = ($parent_id !== null && !empty($_POST['column_name'])) ? trim($_POST['column_name']) : null;
+            $display_order = (int)$_POST['display_order'];
+
+            $stmt = $db->prepare("
+                INSERT INTO header_menu_items (parent_id, title, link_type, page_slug, custom_url, menu_type, column_name, display_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([$parent_id, $title, $link_type, $page_slug, $custom_url, $menu_type, $column_name, $display_order]);
+            $success_message = "Header menu item added successfully.";
+
+        } elseif ($action === 'edit_header_menu') {
+            $id = (int)$_POST['header_menu_id'];
+            $parent_id = !empty($_POST['parent_id']) ? (int)$_POST['parent_id'] : null;
+            $title = trim($_POST['title']);
+            $link_type = trim($_POST['link_type']);
+            $page_slug = $link_type === 'page' ? trim($_POST['page_slug']) : null;
+            $custom_url = $link_type === 'custom' ? trim($_POST['custom_url']) : null;
+            $menu_type = $parent_id === null ? trim($_POST['menu_type']) : 'single_page';
+            $column_name = ($parent_id !== null && !empty($_POST['column_name'])) ? trim($_POST['column_name']) : null;
+            $display_order = (int)$_POST['display_order'];
+
+            $stmt = $db->prepare("
+                UPDATE header_menu_items 
+                SET parent_id = ?, title = ?, link_type = ?, page_slug = ?, custom_url = ?, menu_type = ?, column_name = ?, display_order = ?
+                WHERE id = ?
+            ");
+            $stmt->execute([$parent_id, $title, $link_type, $page_slug, $custom_url, $menu_type, $column_name, $display_order, $id]);
+            $success_message = "Header menu item updated successfully.";
+
+        } elseif ($action === 'delete_header_menu') {
+            $id = (int)$_POST['header_menu_id'];
+            $stmt = $db->prepare("DELETE FROM header_menu_items WHERE id = ?");
+            $stmt->execute([$id]);
+            $success_message = "Header menu item deleted successfully.";
+
+        } elseif ($action === 'add_footer') {
+            $column_name = trim($_POST['column_name']);
+            $title = trim($_POST['title']);
+            $link_type = trim($_POST['link_type']);
+            $page_slug = $link_type === 'page' ? trim($_POST['page_slug']) : null;
+            $custom_url = $link_type === 'custom' ? trim($_POST['custom_url']) : null;
+            $display_order = (int)$_POST['display_order'];
+
+            $stmt = $db->prepare("
+                INSERT INTO footer_items (column_name, title, link_type, page_slug, custom_url, display_order)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([$column_name, $title, $link_type, $page_slug, $custom_url, $display_order]);
+            $success_message = "Footer item added successfully.";
+
+        } elseif ($action === 'edit_footer') {
+            $id = (int)$_POST['footer_id'];
+            $column_name = trim($_POST['column_name']);
+            $title = trim($_POST['title']);
+            $link_type = trim($_POST['link_type']);
+            $page_slug = $link_type === 'page' ? trim($_POST['page_slug']) : null;
+            $custom_url = $link_type === 'custom' ? trim($_POST['custom_url']) : null;
+            $display_order = (int)$_POST['display_order'];
+
+            $stmt = $db->prepare("
+                UPDATE footer_items 
+                SET column_name = ?, title = ?, link_type = ?, page_slug = ?, custom_url = ?, display_order = ?
+                WHERE id = ?
+            ");
+            $stmt->execute([$column_name, $title, $link_type, $page_slug, $custom_url, $display_order, $id]);
+            $success_message = "Footer item updated successfully.";
+
+        } elseif ($action === 'delete_footer') {
+            $id = (int)$_POST['footer_id'];
+            $stmt = $db->prepare("DELETE FROM footer_items WHERE id = ?");
+            $stmt->execute([$id]);
+            $success_message = "Footer item deleted successfully.";
+
+        } elseif ($action === 'update_settings') {
+            $stmt = $db->prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
+            foreach ($_POST['settings'] as $k => $v) {
+                $stmt->execute([$k, trim($v)]);
+            }
+            if (isset($_FILES['logo']) && $_FILES['logo']['error'] === UPLOAD_ERR_OK) {
+                if (strpos($_FILES['logo']['type'], 'image/') === 0) {
+                    move_uploaded_file($_FILES['logo']['tmp_name'], __DIR__ . '/logo.png');
+                } else {
+                    $error_message = "Uploaded logo file must be a valid image.";
+                }
+            }
+            if ($error_message === '') {
+                $success_message = "Academy configuration and logo updated successfully.";
+            }
+
+        } elseif ($action === 'update_password') {
+            $current_pw = $_POST['current_password'];
+            $new_pw = $_POST['new_password'];
+            $confirm_pw = $_POST['confirm_password'];
+
+            if ($new_pw !== $confirm_pw) {
+                $error_message = "New password confirmation does not match.";
+            } else {
+                $stmt = $db->prepare("SELECT * FROM users WHERE username = ? LIMIT 1");
+                $stmt->execute([$_SESSION['lspl_xyz_admin_username']]);
+                $user = $stmt->fetch();
+
+                if ($user && password_verify($current_pw, $user['password'])) {
+                    $new_hash = password_hash($new_pw, PASSWORD_DEFAULT);
+                    $update_stmt = $db->prepare("UPDATE users SET password = ? WHERE id = ?");
+                    $update_stmt->execute([$new_hash, $user['id']]);
+                    $success_message = "Password updated successfully.";
+                } else {
+                    $error_message = "Current password verification failed.";
+                }
+            }
+        }
+    } catch (Exception $e) {
+        $error_message = "Action Error: " . $e->getMessage();
+    }
+}
+
+// Fetch settings
+$settings_query = $db->query("SELECT key, value FROM settings");
+$site = [];
+while ($row = $settings_query->fetch()) {
+    $site[$row['key']] = $row['value'];
+}
+?>
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LSPL Academy | Admin Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        .badge-type {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .badge-type.contact { background: hsla(200 90% 50% / 0.15); color: hsl(200 90% 50%); }
+        .badge-type.registration { background: hsla(150 90% 40% / 0.15); color: hsl(150 90% 40%); }
+        
+        .alert-box {
+            padding: 1rem 1.25rem;
+            border-radius: var(--radius-md);
+            margin-bottom: 2rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 0.9rem;
+        }
+        .alert-box.success {
+            background: hsla(var(--success) / 0.15);
+            border: 1px solid hsla(var(--success) / 0.25);
+            color: hsl(var(--success));
+        }
+        .alert-box.error {
+            background: hsla(var(--destructive) / 0.15);
+            border: 1px solid hsla(var(--destructive) / 0.25);
+            color: hsl(var(--destructive));
+        }
+        .action-icon-btn {
+            background: transparent;
+            border: 1px solid hsl(var(--border));
+            color: hsl(var(--foreground));
+            padding: 0.4rem;
+            border-radius: 4px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+        }
+        .action-icon-btn:hover {
+            background: hsl(var(--muted));
+        }
+        .action-icon-btn.delete:hover {
+            background: hsla(var(--destructive) / 0.15);
+            color: hsl(var(--destructive));
+            border-color: hsla(var(--destructive) / 0.25);
+        }
+        .edit-form-panel {
+            padding: 2rem;
+            margin-bottom: 2rem;
+            border-radius: var(--radius-lg);
+            border: 1px dashed hsl(var(--primary) / 0.3);
+            background: hsla(var(--primary) / 0.02);
+        }
+        
+        /* Adjust administrative list layout */
+        .admin-nav {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+        .admin-nav-item {
+            width: 100%;
+        }
+        .admin-nav-item a {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            border-radius: var(--radius-md);
+            color: hsl(var(--muted-foreground));
+            font-family: var(--font-heading);
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all var(--transition-fast);
+        }
+        .admin-nav-item.active a, .admin-nav-item a:hover {
+            background: hsla(var(--primary) / 0.12);
+            color: hsl(var(--primary));
+        }
+    </style>
+</head>
+<body class="admin-body">
+    <!-- Admin Sidebar -->
+    <div class="admin-sidebar glass-panel">
+        <div class="admin-brand">
+            <img src="logo.png" alt="LSPL Academy Logo">
+            <span>Academy Admin</span>
+        </div>
+        
+        <ul class="admin-nav">
+            <li class="admin-nav-item <?php echo $current_tab === 'leads' ? 'active' : ''; ?>">
+                <a href="?tab=leads"><i data-lucide="inbox"></i> Admissions CRM</a>
+            </li>
+            <li class="admin-nav-item <?php echo $current_tab === 'services' ? 'active' : ''; ?>">
+                <a href="?tab=services"><i data-lucide="layers"></i> Courses CRUD</a>
+            </li>
+            <li class="admin-nav-item <?php echo $current_tab === 'pages' ? 'active' : ''; ?>">
+                <a href="?tab=pages"><i data-lucide="file-code"></i> Pages CMS</a>
+            </li>
+            <li class="admin-nav-item <?php echo $current_tab === 'menus' ? 'active' : ''; ?>">
+                <a href="?tab=menus"><i data-lucide="menu"></i> Menu Manager</a>
+            </li>
+            <li class="admin-nav-item <?php echo $current_tab === 'blogs' ? 'active' : ''; ?>">
+                <a href="?tab=blogs"><i data-lucide="book-open"></i> Publications CRUD</a>
+            </li>
+            <li class="admin-nav-item <?php echo $current_tab === 'settings' ? 'active' : ''; ?>">
+                <a href="?tab=settings"><i data-lucide="settings"></i> System Config</a>
+            </li>
+            <li class="admin-nav-item <?php echo $current_tab === 'account' ? 'active' : ''; ?>">
+                <a href="?tab=account"><i data-lucide="shield"></i> Security Keys</a>
+            </li>
+            <li class="admin-nav-item" style="margin-top: auto;">
+                <a href="logout.php" style="color: hsl(var(--destructive));"><i data-lucide="log-out"></i> Log Out</a>
+            </li>
+        </ul>
+    </div>
+
+    <!-- Main Content -->
+    <main class="admin-main">
+        <div class="admin-header">
+            <div>
+                <span class="badge badge-primary">LSPL Academy Console</span>
+                <h1 style="font-size: 2rem; margin-top: 0.25rem;">
+                    <?php
+                    $tab_names = [
+                        'leads' => 'Academy Enrollments & Inquiries',
+                        'services' => 'Training Courses Catalog',
+                        'pages' => 'Custom Academic Pages (CMS)',
+                        'menus' => 'Header Megamenu & Footer Custom Links',
+                        'blogs' => 'Academy Blog Articles',
+                        'settings' => 'Academy Branding settings',
+                        'account' => 'Admin Credentials Vault'
+                    ];
+                    echo isset($tab_names[$current_tab]) ? $tab_names[$current_tab] : 'Console';
+                    ?>
+                </h1>
+            </div>
+            <div style="font-size: 0.9rem; color: hsl(var(--muted-foreground));">
+                User: <strong><?php echo htmlspecialchars($_SESSION['lspl_xyz_admin_username']); ?></strong>
+            </div>
+        </div>
+
+        <?php if (!empty($success_message)): ?>
+            <div class="alert-box success">
+                <i data-lucide="check-circle" style="width: 20px; height: 20px;"></i>
+                <span><?php echo htmlspecialchars($success_message); ?></span>
+            </div>
+        <?php endif; ?>
+
+        <?php if (!empty($error_message)): ?>
+            <div class="alert-box error">
+                <i data-lucide="alert-triangle" style="width: 20px; height: 20px;"></i>
+                <span><?php echo htmlspecialchars($error_message); ?></span>
+            </div>
+        <?php endif; ?>
+
+        <!-- TAB CONTENT: ADMISSIONS CRM -->
+        <?php if ($current_tab === 'leads'): ?>
+            <?php
+            $leads_count = $db->query("SELECT COUNT(*) FROM leads")->fetchColumn();
+            $new_count = $db->query("SELECT COUNT(*) FROM leads WHERE status = 'New'")->fetchColumn();
+            $contacted_count = $db->query("SELECT COUNT(*) FROM leads WHERE status = 'Contacted'")->fetchColumn();
+            
+            $leads = $db->query("SELECT * FROM leads ORDER BY created_at DESC")->fetchAll();
+            ?>
+            <div class="dash-stats">
+                <div class="glass-card dash-stat-card">
+                    <div class="dash-stat-icon"><i data-lucide="inbox"></i></div>
+                    <div>
+                        <h4 style="font-size: 1.5rem;"><?php echo $leads_count; ?></h4>
+                        <span style="font-size: 0.75rem; color: var(--muted-foreground)">Total Applications</span>
+                    </div>
+                </div>
+                <div class="glass-card dash-stat-card" style="border-color: hsla(var(--primary) / 0.3); ">
+                    <div class="dash-stat-icon" style="background: hsla(var(--primary) / 0.15); color: hsl(var(--primary));"><i data-lucide="zap"></i></div>
+                    <div>
+                        <h4 style="font-size: 1.5rem;"><?php echo $new_count; ?></h4>
+                        <span style="font-size: 0.75rem; color: var(--muted-foreground)">Unprocessed (New)</span>
+                    </div>
+                </div>
+                <div class="glass-card dash-stat-card" style="border-color: hsla(var(--warning) / 0.3);">
+                    <div class="dash-stat-icon" style="background: hsla(var(--warning) / 0.15); color: hsl(var(--warning));"><i data-lucide="message-square"></i></div>
+                    <div>
+                        <h4 style="font-size: 1.5rem;"><?php echo $contacted_count; ?></h4>
+                        <span style="font-size: 0.75rem; color: var(--muted-foreground)">Contacted Inquiries</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-card admin-card">
+                <h3 style="font-size: 1.25rem; margin-bottom: 1rem;">Client Applications</h3>
+                
+                <?php if (empty($leads)): ?>
+                    <p style="text-align: center; padding: 3rem 0; color: var(--muted-foreground);">No enrollments received yet.</p>
+                <?php else: ?>
+                    <div class="admin-table-container">
+                        <table class="admin-table">
+                            <thead>
+                                <tr>
+                                    <th>Client / Student</th>
+                                    <th>Type</th>
+                                    <th>Applied Program</th>
+                                    <th>Duration / Mode</th>
+                                    <th>Est Tuition</th>
+                                    <th>Inquiry details</th>
+                                    <th>Date</th>
+                                    <th>Status</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($leads as $lead): ?>
+                                    <tr>
+                                        <td>
+                                            <div style="font-weight: 600;"><?php echo htmlspecialchars($lead['name']); ?></div>
+                                            <div style="font-size: 0.75rem; color: var(--muted-foreground); margin-top: 0.15rem;">
+                                                <a href="mailto:<?php echo htmlspecialchars($lead['email']); ?>" style="text-decoration: underline;"><?php echo htmlspecialchars($lead['email']); ?></a><br>
+                                                <?php echo htmlspecialchars($lead['phone']); ?>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <span class="badge-type <?php echo htmlspecialchars($lead['type']); ?>">
+                                                <?php echo htmlspecialchars($lead['type']); ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div style="font-weight: 500; font-size: 0.85rem; max-width: 180px;"><?php echo htmlspecialchars($lead['service_selected'] ?? 'General Consult'); ?></div>
+                                        </td>
+                                        <td>
+                                            <div style="font-size: 0.75rem; font-weight:500;">
+                                                <?php echo htmlspecialchars($lead['duration_selected'] ?? 'N/A'); ?>
+                                            </div>
+                                        </td>
+                                        <td style="font-weight: 700; color: hsl(var(--accent));">
+                                            <?php echo htmlspecialchars($lead['budget'] ?? 'N/A'); ?>
+                                        </td>
+                                        <td style="font-size: 0.82rem; max-width: 180px;">
+                                            <?php echo nl2br(htmlspecialchars($lead['message'] ?? '')); ?>
+                                        </td>
+                                        <td style="font-size: 0.8rem; white-space: nowrap;">
+                                            <?php echo date('d M Y, h:i A', strtotime($lead['created_at'])); ?>
+                                        </td>
+                                        <td>
+                                            <form method="POST" style="margin: 0; display: flex; align-items: center;">
+                                                <input type="hidden" name="action" value="update_lead_status">
+                                                <input type="hidden" name="lead_id" value="<?php echo $lead['id']; ?>">
+                                                <select name="status" class="form-control" style="font-size: 0.75rem; padding: 0.25rem 0.5rem; width: 110px;" onchange="this.form.submit()">
+                                                    <option value="New" <?php echo $lead['status'] === 'New' ? 'selected' : ''; ?>>New</option>
+                                                    <option value="Contacted" <?php echo $lead['status'] === 'Contacted' ? 'selected' : ''; ?>>Contacted</option>
+                                                    <option value="Closed" <?php echo $lead['status'] === 'Closed' ? 'selected' : ''; ?>>Closed</option>
+                                                </select>
+                                            </form>
+                                        </td>
+                                        <td>
+                                            <form method="POST" style="margin: 0;" onsubmit="return confirm('Delete enrollment entry?')">
+                                                <input type="hidden" name="action" value="delete_lead">
+                                                <input type="hidden" name="lead_id" value="<?php echo $lead['id']; ?>">
+                                                <button type="submit" class="action-icon-btn delete" title="Delete"><i data-lucide="trash-2" style="width: 16px; height: 16px;"></i></button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+        <!-- TAB CONTENT: COURSES CRUD -->
+        <?php elseif ($current_tab === 'services'): ?>
+            <?php
+            $edit_service = null;
+            if (isset($_GET['edit_service_id'])) {
+                $e_stmt = $db->prepare("SELECT * FROM services WHERE id = ?");
+                $e_stmt->execute([(int)$_GET['edit_service_id']]);
+                $edit_service = $e_stmt->fetch();
+            }
+            $services = $db->query("SELECT * FROM services ORDER BY display_order ASC")->fetchAll();
+            ?>
+
+            <?php if ($edit_service): ?>
+                <div class="glass-card edit-form-panel">
+                    <h3 style="font-size: 1.25rem; margin-bottom: 1.5rem;"><i data-lucide="edit"></i> Modify Course: <?php echo htmlspecialchars($edit_service['title']); ?></h3>
+                    <form method="POST" action="admin.php?tab=services" class="edit-form-grid">
+                        <input type="hidden" name="action" value="edit_service">
+                        <input type="hidden" name="service_id" value="<?php echo $edit_service['id']; ?>">
+                        
+                        <div class="form-group">
+                            <label for="title">Course Program Title</label>
+                            <input type="text" name="title" class="form-control" value="<?php echo htmlspecialchars($edit_service['title']); ?>" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="category">Category</label>
+                            <select name="category" class="form-control">
+                                <option value="Flagship Bootcamps" <?php echo $edit_service['category'] === 'Flagship Bootcamps' ? 'selected' : ''; ?>>Flagship Bootcamps</option>
+                                <option value="Seasonal Certifications" <?php echo $edit_service['category'] === 'Seasonal Certifications' ? 'selected' : ''; ?>>Seasonal Certifications</option>
+                                <option value="Academic Partnering" <?php echo $edit_service['category'] === 'Academic Partnering' ? 'selected' : ''; ?>>Academic Partnering</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="icon">Lucide Icon Name</label>
+                            <input type="text" name="icon" class="form-control" value="<?php echo htmlspecialchars($edit_service['icon']); ?>" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="display_order">Display Position Order</label>
+                            <input type="number" name="display_order" class="form-control" value="<?php echo $edit_service['display_order']; ?>" required>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="tech_stack">Technologies Taught (Comma separated)</label>
+                            <input type="text" name="tech_stack" class="form-control" value="<?php echo htmlspecialchars($edit_service['tech_stack']); ?>" required>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="description">Detailed Course Syllabus Summary</label>
+                            <textarea name="description" class="form-control" rows="4" required><?php echo htmlspecialchars($edit_service['description']); ?></textarea>
+                        </div>
+
+                        <div class="full-width" style="display: flex; gap: 1rem; margin-top: 1rem;">
+                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                            <a href="admin.php?tab=services" class="btn btn-outline">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+            <?php else: ?>
+                <div class="glass-card edit-form-panel" style="border-color: hsla(var(--success) / 0.3); background: hsla(var(--success) / 0.01);">
+                    <h3 style="font-size: 1.25rem; margin-bottom: 1.5rem;"><i data-lucide="plus-circle"></i> Add New Course Program</h3>
+                    <form method="POST" action="admin.php?tab=services" class="edit-form-grid">
+                        <input type="hidden" name="action" value="add_service">
+                        
+                        <div class="form-group">
+                            <label for="title">Course Title</label>
+                            <input type="text" name="title" class="form-control" placeholder="e.g. Master React Frontend Framework" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="category">Category</label>
+                            <select name="category" class="form-control">
+                                <option value="Flagship Bootcamps">Flagship Bootcamps</option>
+                                <option value="Seasonal Certifications">Seasonal Certifications</option>
+                                <option value="Academic Partnering">Academic Partnering</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="icon">Lucide Icon Name</label>
+                            <input type="text" name="icon" class="form-control" placeholder="code" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="display_order">Display Order</label>
+                            <input type="number" name="display_order" class="form-control" value="0" required>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="tech_stack">Technologies (Comma separated)</label>
+                            <input type="text" name="tech_stack" class="form-control" placeholder="React, Redux, Node.js" required>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="description">Course Syllabus Summary</label>
+                            <textarea name="description" class="form-control" rows="3" placeholder="Enter course description copy..." required></textarea>
+                        </div>
+
+                        <div class="full-width" style="margin-top: 1rem;">
+                            <button type="submit" class="btn btn-secondary">Publish Course</button>
+                        </div>
+                    </form>
+                </div>
+            <?php endif; ?>
+
+            <div class="glass-card admin-card">
+                <h3 style="font-size: 1.25rem; margin-bottom: 1rem;">Syllabus Directory</h3>
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Order</th>
+                                <th>Icon</th>
+                                <th>Course Title</th>
+                                <th>Category</th>
+                                <th>Tech Scope</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($services as $srv): ?>
+                                <tr>
+                                    <td><strong><?php echo $srv['display_order']; ?></strong></td>
+                                    <td><i data-lucide="<?php echo htmlspecialchars($srv['icon']); ?>" style="color: hsl(var(--primary));"></i></td>
+                                    <td style="font-weight: 600;"><?php echo htmlspecialchars($srv['title']); ?></td>
+                                    <td><span class="badge badge-primary"><?php echo htmlspecialchars($srv['category']); ?></span></td>
+                                    <td><?php echo htmlspecialchars($srv['tech_stack']); ?></td>
+                                    <td>
+                                        <div style="display: flex; gap: 0.5rem;">
+                                            <a href="admin.php?tab=services&edit_service_id=<?php echo $srv['id']; ?>" class="action-icon-btn"><i data-lucide="edit" style="width: 16px; height: 16px;"></i></a>
+                                            <form method="POST" style="margin:0;" onsubmit="return confirm('Delete course?')">
+                                                <input type="hidden" name="action" value="delete_service">
+                                                <input type="hidden" name="service_id" value="<?php echo $srv['id']; ?>">
+                                                <button type="submit" class="action-icon-btn delete"><i data-lucide="trash-2" style="width: 16px; height: 16px;"></i></button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        <!-- TAB CONTENT: PAGES CMS -->
+        <?php elseif ($current_tab === 'pages'): ?>
+            <?php
+            $edit_page = null;
+            if (isset($_GET['edit_page_id'])) {
+                $p_stmt = $db->prepare("SELECT * FROM pages WHERE id = ?");
+                $p_stmt->execute([(int)$_GET['edit_page_id']]);
+                $edit_page = $p_stmt->fetch();
+            }
+            $pages = $db->query("SELECT * FROM pages ORDER BY display_order ASC")->fetchAll();
+            ?>
+
+            <?php if ($edit_page): ?>
+                <div class="glass-card edit-form-panel">
+                    <h3 style="font-size: 1.25rem; margin-bottom: 1.5rem;"><i data-lucide="edit"></i> Modify Academic Page: <?php echo htmlspecialchars($edit_page['title']); ?></h3>
+                    <form method="POST" action="admin.php?tab=pages" class="edit-form-grid">
+                        <input type="hidden" name="action" value="edit_page">
+                        <input type="hidden" name="page_id" value="<?php echo $edit_page['id']; ?>">
+                        
+                        <div class="form-group">
+                            <label for="title">Page Title</label>
+                            <input type="text" name="title" class="form-control" value="<?php echo htmlspecialchars($edit_page['title']); ?>" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="slug">Page URL Slug (Unique, no spaces)</label>
+                            <input type="text" name="slug" class="form-control" value="<?php echo htmlspecialchars($edit_page['slug']); ?>" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="display_in_nav">Show in Main Nav Bar?</label>
+                            <select name="display_in_nav" class="form-control">
+                                <option value="1" <?php echo $edit_page['display_in_nav'] == 1 ? 'selected' : ''; ?>>Yes (Visible link)</option>
+                                <option value="0" <?php echo $edit_page['display_in_nav'] == 0 ? 'selected' : ''; ?>>No (Hidden link)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="display_order">Nav Bar Position Order</label>
+                            <input type="number" name="display_order" class="form-control" value="<?php echo $edit_page['display_order']; ?>" required>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="content">Page Body Content (HTML formatting allowed)</label>
+                            <textarea name="content" class="form-control" rows="12" required><?php echo htmlspecialchars($edit_page['content']); ?></textarea>
+                        </div>
+
+                        <div class="full-width" style="display: flex; gap: 1rem; margin-top: 1rem;">
+                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                            <a href="admin.php?tab=pages" class="btn btn-outline">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+            <?php else: ?>
+                <div class="glass-card edit-form-panel" style="border-color: hsla(var(--success) / 0.3); background: hsla(var(--success) / 0.01);">
+                    <h3 style="font-size: 1.25rem; margin-bottom: 1.5rem;"><i data-lucide="plus-circle"></i> Create New Dynamic Page</h3>
+                    <form method="POST" action="admin.php?tab=pages" class="edit-form-grid">
+                        <input type="hidden" name="action" value="add_page">
+                        
+                        <div class="form-group">
+                            <label for="title">Page Title</label>
+                            <input type="text" name="title" class="form-control" placeholder="e.g. Scholarship Grid" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="slug">Page URL Slug (Unique, lowercase, e.g. scholarship-grid)</label>
+                            <input type="text" name="slug" class="form-control" placeholder="scholarship-grid" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="display_in_nav">Show in Nav?</label>
+                            <select name="display_in_nav" class="form-control">
+                                <option value="1">Yes</option>
+                                <option value="0">No</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="display_order">Display Order</label>
+                            <input type="number" name="display_order" class="form-control" value="0" required>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="content">Page Body Content (HTML allowed)</label>
+                            <textarea name="content" class="form-control" rows="8" placeholder="<h3>Syllabus Grants</h3><p>Enter text here...</p>" required></textarea>
+                        </div>
+
+                        <div class="full-width" style="margin-top: 1rem;">
+                            <button type="submit" class="btn btn-secondary">Create Dynamic Page</button>
+                        </div>
+                    </form>
+                </div>
+            <?php endif; ?>
+
+            <div class="glass-card admin-card">
+                <h3 style="font-size: 1.25rem; margin-bottom: 1rem;">Dynamic Pages List</h3>
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Order</th>
+                                <th>Page Title</th>
+                                <th>Slug</th>
+                                <th>Nav Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($pages as $p): ?>
+                                <tr>
+                                    <td><strong><?php echo $p['display_order']; ?></strong></td>
+                                    <td style="font-weight: 600;"><?php echo htmlspecialchars($p['title']); ?></td>
+                                    <td style="color: hsl(var(--primary));"><code>page.php?slug=<?php echo htmlspecialchars($p['slug']); ?></code></td>
+                                    <td>
+                                        <span class="badge <?php echo $p['display_in_nav'] == 1 ? 'badge-primary' : 'badge-outline'; ?>">
+                                            <?php echo $p['display_in_nav'] == 1 ? 'Nav Visible' : 'Hidden'; ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div style="display: flex; gap: 0.5rem;">
+                                            <a href="admin.php?tab=pages&edit_page_id=<?php echo $p['id']; ?>" class="action-icon-btn"><i data-lucide="edit" style="width: 16px; height: 16px;"></i></a>
+                                            <form method="POST" style="margin:0;" onsubmit="return confirm('Delete page?')">
+                                                <input type="hidden" name="action" value="delete_page">
+                                                <input type="hidden" name="page_id" value="<?php echo $p['id']; ?>">
+                                                <button type="submit" class="action-icon-btn delete"><i data-lucide="trash-2" style="width: 16px; height: 16px;"></i></button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        <!-- TAB CONTENT: PUBLICATIONS CRUD -->
+        <?php elseif ($current_tab === 'blogs'): ?>
+            <?php
+            $edit_blog = null;
+            if (isset($_GET['edit_blog_id'])) {
+                $b_stmt = $db->prepare("SELECT * FROM blogs WHERE id = ?");
+                $b_stmt->execute([(int)$_GET['edit_blog_id']]);
+                $edit_blog = $b_stmt->fetch();
+            }
+            $blogs = $db->query("SELECT * FROM blogs ORDER BY created_at DESC")->fetchAll();
+            ?>
+
+            <?php if ($edit_blog): ?>
+                <div class="glass-card edit-form-panel">
+                    <h3 style="font-size: 1.25rem; margin-bottom: 1.5rem;"><i data-lucide="edit"></i> Modify Publication: <?php echo htmlspecialchars($edit_blog['title']); ?></h3>
+                    <form method="POST" action="admin.php?tab=blogs" enctype="multipart/form-data" class="edit-form-grid">
+                        <input type="hidden" name="action" value="edit_blog">
+                        <input type="hidden" name="blog_id" value="<?php echo $edit_blog['id']; ?>">
+                        
+                        <div class="form-group">
+                            <label for="title">Article Title</label>
+                            <input type="text" name="title" class="form-control" value="<?php echo htmlspecialchars($edit_blog['title']); ?>" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="slug">URL Slug (Unique, lowercase, e.g. engineering-interview-prep)</label>
+                            <input type="text" name="slug" class="form-control" value="<?php echo htmlspecialchars($edit_blog['slug']); ?>" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="author">Author Name / Entity</label>
+                            <input type="text" name="author" class="form-control" value="<?php echo htmlspecialchars($edit_blog['author']); ?>" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="status">Publication Status</label>
+                            <select name="status" class="form-control">
+                                <option value="Published" <?php echo $edit_blog['status'] === 'Published' ? 'selected' : ''; ?>>Published</option>
+                                <option value="Draft" <?php echo $edit_blog['status'] === 'Draft' ? 'selected' : ''; ?>>Draft / Hidden</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="summary">Short Summary (Shows in list view cards)</label>
+                            <input type="text" name="summary" class="form-control" value="<?php echo htmlspecialchars($edit_blog['summary']); ?>" required>
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="blog_image">Featured Image</label>
+                            <?php if (!empty($edit_blog['image_url'])): ?>
+                                <img src="<?php echo htmlspecialchars($edit_blog['image_url']); ?>?v=<?php echo filemtime($edit_blog['image_url']); ?>" style="max-height: 100px; width: auto; object-fit: contain; margin-bottom: 0.5rem; display: block; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+                            <?php endif; ?>
+                            <input type="file" name="blog_image" id="blog_image" class="form-control" accept="image/*">
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="content">Article Full Content body (HTML allowed)</label>
+                            <textarea name="content" id="editor-edit" class="form-control" rows="12"><?php echo htmlspecialchars($edit_blog['content']); ?></textarea>
+                        </div>
+
+                        <div class="full-width" style="display: flex; gap: 1rem; margin-top: 1rem;">
+                            <button type="submit" class="btn btn-primary">Save Changes</button>
+                            <a href="admin.php?tab=blogs" class="btn btn-outline">Cancel</a>
+                        </div>
+                    </form>
+                </div>
+            <?php else: ?>
+                <div class="glass-card edit-form-panel" style="border-color: hsla(var(--success) / 0.3); background: hsla(var(--success) / 0.01);">
+                    <h3 style="font-size: 1.25rem; margin-bottom: 1.5rem;"><i data-lucide="plus-circle"></i> Publish New Academy Article</h3>
+                    <form method="POST" action="admin.php?tab=blogs" enctype="multipart/form-data" class="edit-form-grid">
+                        <input type="hidden" name="action" value="add_blog">
+                        
+                        <div class="form-group">
+                            <label for="title">Article Title</label>
+                            <input type="text" name="title" class="form-control" placeholder="e.g. Master Web Architecture in 2026" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="slug">URL Slug</label>
+                            <input type="text" name="slug" class="form-control" placeholder="master-web-architecture-2026" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="author">Author Name / Board</label>
+                            <input type="text" name="author" class="form-control" value="Academy Board" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="status">Publication Status</label>
+                            <select name="status" class="form-control">
+                                <option value="Published">Published</option>
+                                <option value="Draft">Draft</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="summary">Short Summary</label>
+                            <input type="text" name="summary" class="form-control" placeholder="Enter a brief summary sentence..." required>
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="blog_image">Featured Image</label>
+                            <input type="file" name="blog_image" id="blog_image" class="form-control" accept="image/*">
+                        </div>
+
+                        <div class="form-group full-width">
+                            <label for="content">Article Full Content (HTML allowed)</label>
+                            <textarea name="content" id="editor-add" class="form-control" rows="8" placeholder="Enter article body content..."></textarea>
+                        </div>
+
+                        <div class="full-width" style="margin-top: 1rem;">
+                            <button type="submit" class="btn btn-secondary">Publish Article</button>
+                        </div>
+                    </form>
+                </div>
+            <?php endif; ?>
+
+            <div class="glass-card admin-card">
+                <h3 style="font-size: 1.25rem; margin-bottom: 1rem;">Blog Articles List</h3>
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Article Title</th>
+                                <th>Author / Entity</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($blogs as $b): ?>
+                                <tr>
+                                    <td style="white-space: nowrap; font-size: 0.82rem;"><?php echo date('d M Y', strtotime($b['created_at'])); ?></td>
+                                    <td style="font-weight: 600;"><?php echo htmlspecialchars($b['title']); ?></td>
+                                    <td><?php echo htmlspecialchars($b['author']); ?></td>
+                                    <td>
+                                        <span class="badge <?php echo $b['status'] === 'Published' ? 'badge-primary' : 'badge-outline'; ?>">
+                                            <?php echo htmlspecialchars($b['status']); ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div style="display: flex; gap: 0.5rem;">
+                                            <a href="admin.php?tab=blogs&edit_blog_id=<?php echo $b['id']; ?>" class="action-icon-btn"><i data-lucide="edit" style="width: 16px; height: 16px;"></i></a>
+                                            <form method="POST" style="margin:0;" onsubmit="return confirm('Delete article?')">
+                                                <input type="hidden" name="action" value="delete_blog">
+                                                <input type="hidden" name="blog_id" value="<?php echo $b['id']; ?>">
+                                                <button type="submit" class="action-icon-btn delete"><i data-lucide="trash-2" style="width: 16px; height: 16px;"></i></button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        <!-- TAB CONTENT: BRANDING CONFIG -->
+        <?php elseif ($current_tab === 'settings'): ?>
+            <div class="glass-card admin-card">
+                <h3 style="font-size: 1.25rem; margin-bottom: 1.5rem;">Landing Page Global Settings</h3>
+                <form method="POST" action="admin.php?tab=settings" enctype="multipart/form-data" class="edit-form-grid">
+                    <input type="hidden" name="action" value="update_settings">
+                    
+                    <h4 class="full-width" style="margin-top: 1rem; border-bottom: 1px dashed hsl(var(--border)); padding-bottom: 0.5rem; color: hsl(var(--primary));">1. SEO Headers & Titles</h4>
+                    
+                    <div class="form-group">
+                        <label for="site_title">Site Title</label>
+                        <input type="text" name="settings[site_title]" class="form-control" value="<?php echo htmlspecialchars($site['site_title'] ?? ''); ?>" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="site_tagline">Tagline</label>
+                        <input type="text" name="settings[site_tagline]" class="form-control" value="<?php echo htmlspecialchars($site['site_tagline'] ?? ''); ?>" required>
+                    </div>
+
+                    <div class="form-group full-width">
+                        <label for="meta_description">Meta Description</label>
+                        <textarea name="settings[meta_description]" class="form-control" rows="2" required><?php echo htmlspecialchars($site['meta_description'] ?? ''); ?></textarea>
+                    </div>
+
+                    <h4 class="full-width" style="margin-top: 1.5rem; border-bottom: 1px dashed hsl(var(--border)); padding-bottom: 0.5rem; color: hsl(var(--primary));">2. Hero Branding Copy</h4>
+
+                    <div class="form-group full-width">
+                        <label for="hero_title">Hero Heading Title</label>
+                        <input type="text" name="settings[hero_title]" class="form-control" value="<?php echo htmlspecialchars($site['hero_title'] ?? ''); ?>" required>
+                    </div>
+
+                    <div class="form-group full-width">
+                        <label for="hero_subtitle">Hero Paragraph Description</label>
+                        <textarea name="settings[hero_subtitle]" class="form-control" rows="3" required><?php echo htmlspecialchars($site['hero_subtitle'] ?? ''); ?></textarea>
+                    </div>
+
+                    <h4 class="full-width" style="margin-top: 1.5rem; border-bottom: 1px dashed hsl(var(--border)); padding-bottom: 0.5rem; color: hsl(var(--primary));">3. Stats Metrics</h4>
+
+                    <div class="form-group">
+                        <label for="stats_courses">Curated Programs count</label>
+                        <input type="text" name="settings[stats_courses]" class="form-control" value="<?php echo htmlspecialchars($site['stats_courses'] ?? ''); ?>" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="stats_students">Certified Alumni count</label>
+                        <input type="text" name="settings[stats_students]" class="form-control" value="<?php echo htmlspecialchars($site['stats_students'] ?? ''); ?>" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="stats_experience">Established Label</label>
+                        <input type="text" name="settings[stats_experience]" class="form-control" value="<?php echo htmlspecialchars($site['stats_experience'] ?? ''); ?>" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="stats_placement">Employment placement ratio</label>
+                        <input type="text" name="settings[stats_placement]" class="form-control" value="<?php echo htmlspecialchars($site['stats_placement'] ?? ''); ?>" required>
+                    </div>
+
+                    <h4 class="full-width" style="margin-top: 1.5rem; border-bottom: 1px dashed hsl(var(--border)); padding-bottom: 0.5rem; color: hsl(var(--primary));">4. Address & Support Info</h4>
+
+                    <div class="form-group">
+                        <label for="contact_email">Public Email</label>
+                        <input type="email" name="settings[contact_email]" class="form-control" value="<?php echo htmlspecialchars($site['contact_email'] ?? ''); ?>" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="contact_phone">Public Phone</label>
+                        <input type="text" name="settings[contact_phone]" class="form-control" value="<?php echo htmlspecialchars($site['contact_phone'] ?? ''); ?>" required>
+                    </div>
+
+                    <div class="form-group full-width">
+                        <label for="contact_address">Physical Address</label>
+                        <input type="text" name="settings[contact_address]" class="form-control" value="<?php echo htmlspecialchars($site['contact_address'] ?? ''); ?>" required>
+                    </div>
+
+                    <h4 class="full-width" style="margin-top: 1.5rem; border-bottom: 1px dashed hsl(var(--border)); padding-bottom: 0.5rem; color: hsl(var(--primary));">5. Logo Brand Assets</h4>
+
+                    <div class="form-group full-width">
+                        <label for="logo_file">Upload New Logo (Overwrites current logo.png)</label>
+                        <input type="file" name="logo" id="logo_file" class="form-control" accept="image/*">
+                    </div>
+
+                    <div class="full-width" style="margin-top: 1.5rem;">
+                        <p style="font-size:0.75rem; color: var(--muted-foreground); margin-bottom:0.5rem;">Registered address must match Shastri Nagar, Kanpur, India, and founded in 2014.</p>
+                        <button type="submit" class="btn btn-primary" style="padding: 0.75rem 2rem;">Save Configurations</button>
+                    </div>
+                </form>
+            </div>
+
+        <!-- TAB CONTENT: MENU MANAGER -->
+                <?php elseif ($current_tab === 'menus'): ?>
+            <!-- TAB CONTENT: MENU MANAGER -->
+            
+            <?php
+            $all_cms_pages = $db->query("SELECT title, slug FROM pages ORDER BY title ASC")->fetchAll();
+            
+            $edit_header = null;
+            if (isset($_GET['edit_header_id'])) {
+                $e_stmt = $db->prepare("SELECT * FROM header_menu_items WHERE id = ?");
+                $e_stmt->execute([(int)$_GET['edit_header_id']]);
+                $edit_header = $e_stmt->fetch();
+            }
+
+            $edit_footer = null;
+            if (isset($_GET['edit_footer_id'])) {
+                $e_stmt = $db->prepare("SELECT * FROM footer_items WHERE id = ?");
+                $e_stmt->execute([(int)$_GET['edit_footer_id']]);
+                $edit_footer = $e_stmt->fetch();
+            }
+
+            $header_items = $db->query("SELECT * FROM header_menu_items ORDER BY display_order ASC, id ASC")->fetchAll();
+            $footer_items = $db->query("SELECT * FROM footer_items ORDER BY column_name ASC, display_order ASC")->fetchAll();
+
+            $top_menu = [];
+            $sub_menu = [];
+            foreach ($header_items as $item) {
+                if ($item['parent_id'] === null || $item['parent_id'] == '') {
+                    $top_menu[] = $item;
+                } else {
+                    $sub_menu[$item['parent_id']][] = $item;
+                }
+            }
+            ?>
+
+            <div style="margin-bottom: 4rem;">
+                <h2 style="font-size: 1.5rem; margin-bottom: 1.5rem; border-bottom: 2px solid hsl(var(--primary)); padding-bottom: 0.5rem; color: hsl(var(--primary));"><i data-lucide="menu"></i> Header Navigation Manager</h2>
+                
+                <?php if ($edit_header): ?>
+                    <div class="glass-card edit-form-panel">
+                        <h3 style="font-size: 1.15rem; margin-bottom: 1.5rem;"><i data-lucide="edit"></i> Modify Header Link: <?php echo htmlspecialchars($edit_header['title']); ?></h3>
+                        <form method="POST" action="admin.php?tab=menus" class="edit-form-grid">
+                            <input type="hidden" name="action" value="edit_header_menu">
+                            <input type="hidden" name="header_menu_id" value="<?php echo $edit_header['id']; ?>">
+                            
+                            <div class="form-group">
+                                <label for="parent_id_edit">Parent Item</label>
+                                <select name="parent_id" id="parent_id_edit" class="form-control">
+                                    <option value="">-- Top-Level Item --</option>
+                                    <?php foreach ($top_menu as $top): 
+                                        if ($top['id'] == $edit_header['id']) continue;
+                                    ?>
+                                        <option value="<?php echo $top['id']; ?>" data-menu-type="<?php echo htmlspecialchars($top['menu_type']); ?>" <?php echo $edit_header['parent_id'] == $top['id'] ? 'selected' : ''; ?>>
+                                            <?php echo htmlspecialchars($top['title']); ?> (<?php echo htmlspecialchars($top['menu_type']); ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="title_edit">Link Display Label</label>
+                                <input type="text" name="title" id="title_edit" class="form-control" value="<?php echo htmlspecialchars($edit_header['title']); ?>" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="link_type_edit">Link Target Type</label>
+                                <select name="link_type" id="link_type_edit" class="form-control">
+                                    <option value="custom" <?php echo $edit_header['link_type'] === 'custom' ? 'selected' : ''; ?>>Custom URL / Static Path</option>
+                                    <option value="page" <?php echo $edit_header['link_type'] === 'page' ? 'selected' : ''; ?>>CMS Dynamic Page</option>
+                                    <option value="none" <?php echo $edit_header['link_type'] === 'none' ? 'selected' : ''; ?>>No Link (Dropdown Trigger)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group" id="page_slug_group_edit">
+                                <label for="page_slug_edit">Link to CMS Page</label>
+                                <select name="page_slug" id="page_slug_edit" class="form-control">
+                                    <option value="">-- Select Page --</option>
+                                    <?php foreach ($all_cms_pages as $cp): ?>
+                                        <option value="<?php echo htmlspecialchars($cp['slug']); ?>" <?php echo $edit_header['page_slug'] === $cp['slug'] ? 'selected' : ''; ?>><?php echo htmlspecialchars($cp['title']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="form-group" id="custom_url_group_edit">
+                                <label for="custom_url_edit">Link to Custom URL</label>
+                                <input type="text" name="custom_url" id="custom_url_edit" class="form-control" value="<?php echo htmlspecialchars($edit_header['custom_url'] ?? ''); ?>">
+                            </div>
+
+                            <div class="form-group" id="menu_type_group_edit">
+                                <label for="menu_type_edit">Menu Type (Top-Level Only)</label>
+                                <select name="menu_type" id="menu_type_edit" class="form-control">
+                                    <option value="single_page" <?php echo $edit_header['menu_type'] === 'single_page' ? 'selected' : ''; ?>>Single Link</option>
+                                    <option value="dropdown" <?php echo $edit_header['menu_type'] === 'dropdown' ? 'selected' : ''; ?>>Standard Dropdown</option>
+                                    <option value="megamenu" <?php echo $edit_header['menu_type'] === 'megamenu' ? 'selected' : ''; ?>>Megamenu</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group" id="column_name_group_edit">
+                                <label for="column_name_edit">Column Group (Megamenu Only)</label>
+                                <input type="text" name="column_name" id="column_name_edit" class="form-control" value="<?php echo htmlspecialchars($edit_header['column_name'] ?? ''); ?>">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="display_order_edit">Display Order</label>
+                                <input type="number" name="display_order" id="display_order_edit" class="form-control" value="<?php echo $edit_header['display_order']; ?>" required>
+                            </div>
+
+                            <div class="full-width" style="margin-top: 1rem; display: flex; gap: 1rem;">
+                                <button type="submit" class="btn btn-primary">Save Changes</button>
+                                <a href="admin.php?tab=menus" class="btn btn-outline">Cancel</a>
+                            </div>
+                        </form>
+                    </div>
+                <?php else: ?>
+                    <div class="glass-card edit-form-panel" style="border-color: hsla(var(--success) / 0.3); background: hsla(var(--success) / 0.01);">
+                        <h3 style="font-size: 1.15rem; margin-bottom: 1.5rem;"><i data-lucide="plus-circle"></i> Add Header Menu Item</h3>
+                        <form method="POST" action="admin.php?tab=menus" class="edit-form-grid">
+                            <input type="hidden" name="action" value="add_header_menu">
+                            
+                            <div class="form-group">
+                                <label for="parent_id_add">Parent Item</label>
+                                <select name="parent_id" id="parent_id_add" class="form-control">
+                                    <option value="">-- Top-Level Item --</option>
+                                    <?php foreach ($top_menu as $top): ?>
+                                        <option value="<?php echo $top['id']; ?>" data-menu-type="<?php echo htmlspecialchars($top['menu_type']); ?>">
+                                            <?php echo htmlspecialchars($top['title']); ?> (<?php echo htmlspecialchars($top['menu_type']); ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="title_add">Link Display Label</label>
+                                <input type="text" name="title" id="title_add" class="form-control" placeholder="e.g. Services" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="link_type_add">Link Target Type</label>
+                                <select name="link_type" id="link_type_add" class="form-control">
+                                    <option value="custom" selected>Custom URL / Static Path</option>
+                                    <option value="page">CMS Dynamic Page</option>
+                                    <option value="none">No Link (Dropdown Trigger)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group" id="page_slug_group_add">
+                                <label for="page_slug_add">Link to CMS Page</label>
+                                <select name="page_slug" id="page_slug_add" class="form-control">
+                                    <option value="">-- Select Page --</option>
+                                    <?php foreach ($all_cms_pages as $cp): ?>
+                                        <option value="<?php echo htmlspecialchars($cp['slug']); ?>"><?php echo htmlspecialchars($cp['title']); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="form-group" id="custom_url_group_add">
+                                <label for="custom_url_add">Link to Custom URL</label>
+                                <input type="text" name="custom_url" id="custom_url_add" class="form-control" placeholder="e.g., index.php#estimator">
+                            </div>
+
+                            <div class="form-group" id="menu_type_group_add">
+                                <label for="menu_type_add">Menu Type (Top-Level Only)</label>
+                                <select name="menu_type" id="menu_type_add" class="form-control">
+                                    <option value="single_page" selected>Single Link</option>
+                                    <option value="dropdown">Standard Dropdown</option>
+                                    <option value="megamenu">Megamenu</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group" id="column_name_group_add">
+                                <label for="column_name_add">Column Group (Megamenu Only)</label>
+                                <input type="text" name="column_name" id="column_name_add" class="form-control" placeholder="e.g. Web Services">
+                            </div>
+
+                            <div class="form-group">
+                                <label for="display_order_add">Display Order</label>
+                                <input type="number" name="display_order" id="display_order_add" class="form-control" value="0" required>
+                            </div>
+
+                            <div class="full-width" style="margin-top: 1rem;">
+                                <button type="submit" class="btn btn-primary">Add Header Menu Item</button>
+                            </div>
+                        </form>
+                    </div>
+                <?php endif; ?>
+
+                <div class="glass-card">
+                    <h3 style="font-size: 1.15rem; margin-bottom: 1rem;">Header Menu Node Tree</h3>
+                    <?php if (empty($header_items)): ?>
+                        <p style="text-align: center; color: var(--muted-foreground); padding: 2rem 0;">No navigation menu nodes configured.</p>
+                    <?php else: ?>
+                        <div class="menu-builder-container" style="background: hsla(var(--card) / 0.5); padding: 1.5rem; border-radius: var(--radius-lg); border: 1px solid hsl(var(--border));">
+                            <p style="font-size: 0.8rem; color: var(--muted-foreground); margin-bottom: 1.5rem;"><i data-lucide="info" style="width:14px; height:14px; display:inline-block; vertical-align:middle; margin-right:4px;"></i> Drag and drop menu items vertically to reorder them, or drag right/left to indent or outdent them. You can also use the helper arrows on each item.</p>
+                            <ul class="nested-sortable-list">
+                                <?php 
+                                foreach ($top_menu as $top): 
+                                    $top_href = $top['link_type'] === 'page' ? 'page.php?slug=' . $top['page_slug'] : $top['custom_url'];
+                                    if ($top['link_type'] === 'none') $top_href = '-- No Link --';
+                                ?>
+                                    <li class="menu-item-node" draggable="true" data-id="<?php echo $top['id']; ?>">
+                                        <div class="menu-item-card">
+                                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                                <i data-lucide="grip-vertical" class="drag-handle" style="cursor: move; color: var(--muted-foreground);"></i>
+                                                <strong><?php echo htmlspecialchars($top['title']); ?></strong>
+                                                <span style="font-size: 0.7rem; color: var(--muted-foreground);">type: <?php echo htmlspecialchars($top['link_type']); ?> (<?php echo htmlspecialchars($top['menu_type']); ?>)</span>
+                                            </div>
+                                            <div class="menu-item-actions" style="display: flex; align-items: center; gap: 0.25rem;">
+                                                <button type="button" class="action-icon-btn" onclick="moveMenuUp(this)" title="Move Up"><i data-lucide="arrow-up" style="width: 14px; height: 14px;"></i></button>
+                                                <button type="button" class="action-icon-btn" onclick="moveMenuDown(this)" title="Move Down"><i data-lucide="arrow-down" style="width: 14px; height: 14px;"></i></button>
+                                                <button type="button" class="action-icon-btn" onclick="changeMenuIndent(this, 'indent')" title="Indent"><i data-lucide="chevron-right" style="width: 14px; height: 14px;"></i></button>
+                                                <button type="button" class="action-icon-btn" onclick="changeMenuIndent(this, 'outdent')" title="Outdent"><i data-lucide="chevron-left" style="width: 14px; height: 14px;"></i></button>
+                                                <a href="admin.php?tab=menus&edit_header_id=<?php echo $top['id']; ?>" class="action-icon-btn" title="Edit"><i data-lucide="edit-2" style="width: 14px; height: 14px;"></i></a>
+                                                <form method="POST" action="admin.php?tab=menus" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this menu item and all submenus?');">
+                                                    <input type="hidden" name="action" value="delete_header_menu">
+                                                    <input type="hidden" name="header_menu_id" value="<?php echo $top['id']; ?>">
+                                                    <button type="submit" class="action-icon-btn delete" title="Delete"><i data-lucide="trash-2" style="width: 14px; height: 14px;"></i></button>
+                                                </form>
+                                            </div>
+                                        </div>
+                                        <ul class="submenu-list">
+                                            <?php if (isset($sub_menu[$top['id']])): ?>
+                                                <?php foreach ($sub_menu[$top['id']] as $sub): 
+                                                    $sub_href = $sub['link_type'] === 'page' ? 'page.php?slug=' . $sub['page_slug'] : $sub['custom_url'];
+                                                ?>
+                                                    <li class="menu-item-node" draggable="true" data-id="<?php echo $sub['id']; ?>">
+                                                        <div class="menu-item-card" style="border-color: hsla(var(--primary) / 0.15); background: hsla(var(--primary) / 0.01);">
+                                                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                                                <i data-lucide="grip-vertical" class="drag-handle" style="cursor: move; color: var(--muted-foreground);"></i>
+                                                                <span><?php echo htmlspecialchars($sub['title']); ?></span>
+                                                                <span style="font-size: 0.7rem; color: var(--muted-foreground);">type: <?php echo htmlspecialchars($sub['link_type']); ?><?php if ($sub['column_name']): ?> | column: <?php echo htmlspecialchars($sub['column_name']); ?><?php endif; ?></span>
+                                                            </div>
+                                                            <div class="menu-item-actions" style="display: flex; align-items: center; gap: 0.25rem;">
+                                                                <button type="button" class="action-icon-btn" onclick="moveMenuUp(this)" title="Move Up"><i data-lucide="arrow-up" style="width: 14px; height: 14px;"></i></button>
+                                                                <button type="button" class="action-icon-btn" onclick="moveMenuDown(this)" title="Move Down"><i data-lucide="arrow-down" style="width: 14px; height: 14px;"></i></button>
+                                                                <button type="button" class="action-icon-btn" onclick="changeMenuIndent(this, 'indent')" title="Indent"><i data-lucide="chevron-right" style="width: 14px; height: 14px;"></i></button>
+                                                                <button type="button" class="action-icon-btn" onclick="changeMenuIndent(this, 'outdent')" title="Outdent"><i data-lucide="chevron-left" style="width: 14px; height: 14px;"></i></button>
+                                                                <a href="admin.php?tab=menus&edit_header_id=<?php echo $sub['id']; ?>" class="action-icon-btn" title="Edit"><i data-lucide="edit-2" style="width: 14px; height: 14px;"></i></a>
+                                                                <form method="POST" action="admin.php?tab=menus" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this sub-menu link?');">
+                                                                    <input type="hidden" name="action" value="delete_header_menu">
+                                                                    <input type="hidden" name="header_menu_id" value="<?php echo $sub['id']; ?>">
+                                                                    <button type="submit" class="action-icon-btn delete" title="Delete"><i data-lucide="trash-2" style="width: 14px; height: 14px;"></i></button>
+                                                                </form>
+                                                            </div>
+                                                        </div>
+                                                        <ul class="submenu-list"></ul>
+                                                    </li>
+                                                <?php endforeach; ?>
+                                            <?php endif; ?>
+                                        </ul>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </div>
+                    <?php endif; ?>
+                </div>
+        <?php endif; ?>
+    </main>
+
+    <!-- Scripts -->
+    <script src="https://cdn.ckeditor.com/ckeditor5/39.0.1/classic/ckeditor.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            if (document.querySelector('#editor-edit')) {
+                ClassicEditor
+                    .create(document.querySelector('#editor-edit'))
+                    .catch(error => { console.error(error); });
+            }
+            if (document.querySelector('#editor-add')) {
+                ClassicEditor
+                    .create(document.querySelector('#editor-add'))
+                    .catch(error => { console.error(error); });
+            }
+        });
+    </script>
+    <script src="app.js"></script>
+    <script>
+        if (typeof lucide !== 'undefined') {
+            lucide.createIcons();
+
+        // AJAX Logo Auto-Uploader & Drag-and-Drop Menu Builder JS Module
+        document.addEventListener('DOMContentLoaded', () => {
+            // A. Settings Logo AJAX Auto-Uploader
+            const fileInputs = document.querySelectorAll('input[type="file"]');
+            fileInputs.forEach(input => {
+                if (input.name === 'blog_image') return;
+                
+                input.addEventListener('change', async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+
+                    const fieldName = e.target.name;
+                    const previewId = fieldName + '_preview';
+                    const previewImg = document.getElementById(previewId);
+                    const noFileLabel = document.getElementById(fieldName + '_no_file');
+
+                    const formData = new FormData();
+                    formData.append('action', 'ajax_upload_logo');
+                    formData.append('field', fieldName);
+                    formData.append(fieldName, file);
+
+                    if (previewImg) {
+                        previewImg.style.opacity = '0.5';
+                    }
+
+                    try {
+                        const response = await fetch('admin.php?tab=settings', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                            if (previewImg) {
+                                previewImg.src = result.url;
+                                previewImg.style.display = 'block';
+                                previewImg.style.opacity = '1';
+                                if (noFileLabel) noFileLabel.style.display = 'none';
+                                showToast('Logo uploaded and updated successfully!', 'success');
+                            }
+                        } else {
+                            alert('Upload failed: ' + result.message);
+                            if (previewImg) previewImg.style.opacity = '1';
+                        }
+                    } catch (error) {
+                        console.error('Error uploading logo:', error);
+                        alert('An error occurred while uploading the logo.');
+                        if (previewImg) previewImg.style.opacity = '1';
+                    }
+                });
+            });
+
+            // B. Drag and Drop Menu Builder
+            initDragAndDrop();
+        });
+
+        // Drag and Drop Logic
+        let draggedEl = null;
+
+        function initDragAndDrop() {
+            const list = document.querySelector('.nested-sortable-list');
+            if (!list) return;
+
+            list.addEventListener('dragstart', (e) => {
+                const item = e.target.closest('.menu-item-node');
+                if (!item) return;
+                draggedEl = item;
+                item.classList.add('dragging');
+                e.stopPropagation();
+            });
+
+            list.addEventListener('dragend', (e) => {
+                const item = e.target.closest('.menu-item-node');
+                if (item) {
+                    item.classList.remove('dragging');
+                }
+                draggedEl = null;
+                saveMenuStructure();
+            });
+
+            list.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (!draggedEl) return;
+
+                const targetNode = e.target.closest('.menu-item-node');
+                if (!targetNode || targetNode === draggedEl) return;
+
+                const card = targetNode.querySelector('.menu-item-card');
+                if (!card) return;
+
+                const rect = card.getBoundingClientRect();
+                const mouseY = e.clientY - rect.top;
+                const mouseX = e.clientX - rect.left;
+
+                const isBefore = mouseY < rect.height / 2;
+
+                if (mouseX > 40 && !isBefore) {
+                    let submenu = targetNode.querySelector('.submenu-list');
+                    if (!submenu) {
+                        submenu = document.createElement('ul');
+                        submenu.className = 'submenu-list';
+                        targetNode.appendChild(submenu);
+                    }
+                    const parentList = targetNode.parentElement;
+                    if (parentList.classList.contains('nested-sortable-list')) {
+                        submenu.appendChild(draggedEl);
+                        return;
+                    }
+                }
+
+                const parentList = targetNode.parentElement;
+                if (mouseX < -10 && parentList.classList.contains('submenu-list')) {
+                    const grandParentLi = parentList.closest('.menu-item-node');
+                    if (grandParentLi) {
+                        grandParentLi.parentNode.insertBefore(draggedEl, grandParentLi.nextSibling);
+                        return;
+                    }
+                }
+
+                if (isBefore) {
+                    targetNode.parentNode.insertBefore(draggedEl, targetNode);
+                } else {
+                    targetNode.parentNode.insertBefore(draggedEl, targetNode.nextSibling);
+                }
+            });
+        }
+
+        async function saveMenuStructure() {
+            const serialized = [];
+            const rootUl = document.querySelector('.nested-sortable-list');
+            if (!rootUl) return;
+
+            const walk = (ul, parentId) => {
+                const items = ul.querySelectorAll(':scope > li.menu-item-node');
+                items.forEach((li, order) => {
+                    const id = li.dataset.id;
+                    serialized.push({
+                        id: id,
+                        parent_id: parentId,
+                        display_order: order
+                    });
+                    const subUl = li.querySelector(':scope > ul.submenu-list');
+                    if (subUl) {
+                        walk(subUl, id);
+                    }
+                });
+            };
+
+            walk(rootUl, null);
+
+            const formData = new FormData();
+            formData.append('action', 'update_menu_order');
+            formData.append('order_data', JSON.stringify(serialized));
+
+            try {
+                const response = await fetch('admin.php?tab=menus', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+                if (result.success) {
+                    showToast('Menu order updated successfully!', 'success');
+                } else {
+                    alert('Failed to update menu order: ' + result.message);
+                }
+            } catch (error) {
+                console.error('Error updating menu order:', error);
+            }
+        }
+
+        function moveMenuUp(btn) {
+            const li = btn.closest('.menu-item-node');
+            const prev = li.previousElementSibling;
+            if (prev) {
+                li.parentNode.insertBefore(li, prev);
+                saveMenuStructure();
+            }
+        }
+
+        function moveMenuDown(btn) {
+            const li = btn.closest('.menu-item-node');
+            const next = li.nextElementSibling;
+            if (next) {
+                li.parentNode.insertBefore(next, li);
+                saveMenuStructure();
+            }
+        }
+
+        function changeMenuIndent(btn, direction) {
+            const li = btn.closest('.menu-item-node');
+            if (direction === 'indent') {
+                const prev = li.previousElementSibling;
+                if (prev) {
+                    let submenu = prev.querySelector('.submenu-list');
+                    if (!submenu) {
+                        submenu = document.createElement('ul');
+                        submenu.className = 'submenu-list';
+                        prev.appendChild(submenu);
+                    }
+                    const parentList = prev.parentElement;
+                    if (parentList.classList.contains('nested-sortable-list')) {
+                        submenu.appendChild(li);
+                        saveMenuStructure();
+                    } else {
+                        alert('Only 2 levels of navigation are supported.');
+                    }
+                } else {
+                    alert('There is no preceding item to nest under.');
+                }
+            } else if (direction === 'outdent') {
+                const parentList = li.parentElement;
+                if (parentList.classList.contains('submenu-list')) {
+                    const parentLi = parentList.closest('.menu-item-node');
+                    if (parentLi) {
+                        parentLi.parentNode.insertBefore(li, parentLi.nextSibling);
+                        if (parentList.children.length === 0) {
+                            parentList.remove();
+                        }
+                        saveMenuStructure();
+                    }
+                } else {
+                    alert('Item is already at the top level.');
+                }
+            }
+        }
+
+        function showToast(message, type) {
+            let toast = document.getElementById('admin-toast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'admin-toast';
+                toast.style.cssText = `
+                    position: fixed;
+                    bottom: 20px;
+                    right: 20px;
+                    background: hsl(var(--card));
+                    border: 1px solid hsl(var(--border));
+                    padding: 1rem 1.5rem;
+                    border-radius: var(--radius-md);
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                    z-index: 9999;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    transition: all 0.3s ease;
+                    transform: translateY(100px);
+                    opacity: 0;
+                    color: hsl(var(--foreground));
+                `;
+                document.body.appendChild(toast);
+            }
+            toast.style.borderColor = type === 'success' ? 'hsl(var(--success))' : 'hsl(var(--destructive))';
+            toast.innerHTML = `<i data-lucide="${type === 'success' ? 'check-circle' : 'alert-triangle'}" style="color: ${type === 'success' ? 'hsl(var(--success))' : 'hsl(var(--destructive))'}; width: 18px; height: 18px; display: inline-block; vertical-align: middle;"></i> <span>${message}</span>`;
+            if (typeof lucide !== 'undefined') {
+                lucide.createIcons({
+                    attrs: {
+                        style: 'width: 18px; height: 18px; display: inline-block; vertical-align: middle;'
+                    }
+                });
+            }
+            toast.style.transform = 'translateY(0)';
+            toast.style.opacity = '1';
+            setTimeout(() => {
+                toast.style.transform = 'translateY(100px)';
+                toast.style.opacity = '0';
+            }, 3000);
+        }
+    
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+Options -MultiViews
+RewriteEngine On
+RewriteBase /longwaysoftronix_v2/
+
+# 301 Redirects for Legacy Packages to the New Cost Estimator
+RewriteRule ^Website-Package\.php$ #estimator [NE,R=301,L]
+RewriteRule ^E-Commerce-Package\.php$ #estimator [NE,R=301,L]
+RewriteRule ^SEO-Package\.php$ #estimator [NE,R=301,L]
+
+# 301 Redirects for Legacy Pages to New Rewrite Clean URLs
+RewriteRule ^aboutus\.php$ page/about-us [R=301,L]
+RewriteRule ^franchise\.php$ page/franchise [R=301,L]
+RewriteRule ^contact\.php$ #contact [NE,R=301,L]
+
+# 301 Redirects for Legacy Services to New Services Clean URLs
+RewriteRule ^Web-Designing\.php$ service/web-designing-ui-ux [R=301,L]
+RewriteRule ^Web-Application-Development\.php$ service/laravel-php-web-apps [R=301,L]
+RewriteRule ^Software-Development\.php$ service/laravel-php-web-apps [R=301,L]
+RewriteRule ^Digital-Marketing\.php$ service/seo-digital-marketing [R=301,L]
+RewriteRule ^Search-Engine-Optimization\.php$ service/seo-digital-marketing [R=301,L]
+RewriteRule ^E-Commerce-Solution\.php$ service/shopify-ecommerce-setups [R=301,L]
+RewriteRule ^Android-App-Development\.php$ service/fullstack-mobile-development [R=301,L]
+RewriteRule ^Networking\.php$ service/cloud-server-setup [R=301,L]
+
+# 301 Redirects for Legacy Training/Workshop URLs to the Academy Portal
+RewriteRule ^weBOShop\.php$ /lspl.xyz_v2/service/weboshop-fullstack-coding [R=301,L]
+RewriteRule ^hackIon\.php$ /lspl.xyz_v2/service/hackion-cybersecurity [R=301,L]
+RewriteRule ^Summer-Training-by-LSPL\.php$ /lspl.xyz_v2/service/seasonal-coding-internships [R=301,L]
+RewriteRule ^Winter-Training-by-LSPL\.php$ /lspl.xyz_v2/service/seasonal-coding-internships [R=301,L]
+RewriteRule ^Summer-Training-Registration\.php$ /lspl.xyz_v2/#estimator [NE,R=301,L]
+
+# Route /service/some-slug to /service.php?slug=some-slug
+RewriteRule ^service/([^/]+)/?$ service.php?slug=$1 [L,QSA]
+
+# Route /industry/some-slug to /industry.php?slug=some-slug
+RewriteRule ^industry/([^/]+)/?$ industry.php?slug=$1 [L,QSA]
+
+# Route /page/some-slug to /page.php?slug=some-slug
+RewriteRule ^page/([^/]+)/?$ page.php?slug=$1 [L,QSA]
+
+# Route /blog to /blog.php
+RewriteRule ^blog/?$ blog.php [L,QSA]
+# Route /estimator to /estimator.php
+RewriteRule ^estimator/?$ estimator.php [L,QSA]
+# Route /services to /services.php
+RewriteRule ^services/?$ services.php [L,QSA]
+# Route /solutions to /solutions.php
+RewriteRule ^solutions/?$ solutions.php [L,QSA]
+
+
+# Route /blog/some-slug to /blog_post.php?slug=some-slug
+RewriteRule ^blog/([^/]+)/?$ blog_post.php?slug=$1 [L,QSA]

@@ -1,0 +1,80 @@
+name: Code Quality & Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  quality-assurance:
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: hermes_test
+          POSTGRES_USER: hermes
+          POSTGRES_PASSWORD: secret_db_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+          
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
+
+    - name: Setup PHP Runtime
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.4'
+        extensions: mbstring, xml, bcmath, pdo, postgres, phpredis
+        coverage: xdebug
+
+    - name: Get Composer Cache Directory
+      id: composer-cache
+      run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+    - name: Cache Composer Dependencies
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+        restore-keys: ${{ runner.os }}-composer-
+
+    - name: Install Composer Dependencies
+      run: composer install --no-progress --no-interaction --prefer-dist
+
+    - name: Run Laravel Pint Linting Checks
+      run: ./vendor/bin/pint --test
+
+    - name: Run PHPStan Static Analysis
+      run: ./vendor/bin/phpstan analyse --memory-limit=2G
+
+    - name: Setup Test Environment Configuration
+      run: |
+        cp .env.example .env
+        sed -i 's/^DB_DATABASE=.*/DB_DATABASE=hermes_test/' .env
+        sed -i 's/^DB_USERNAME=.*/DB_USERNAME=hermes/' .env
+        sed -i 's/^DB_PASSWORD=.*/DB_PASSWORD=secret_db_password/' .env
+        sed -i 's/^DB_HOST=.*/DB_HOST=127.0.0.1/' .env
+        sed -i 's/^REDIS_HOST=.*/REDIS_HOST=127.0.0.1/' .env
+        php artisan key:generate
+
+    - name: Execute Pest Unit & Feature Tests
+      run: ./vendor/bin/pest

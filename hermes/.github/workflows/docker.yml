@@ -1,0 +1,42 @@
+name: Docker Image Build & Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  docker-validation:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Source Code
+      uses: actions/checkout@v4
+
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Validate Docker Compose Configuration
+      run: docker compose config
+
+    - name: Compile Application PHP Docker Image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./docker/php
+        file: ./docker/php/Dockerfile
+        push: false
+        tags: hermes-php-app:test
+        load: true
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Run Trivy Vulnerability Security Scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'hermes-php-app:test'
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'

@@ -1,0 +1,442 @@
+#!/usr/bin/env bash
+
+# Hermes AI Platform - Unified Management CLI v1.0.0
+# Targets: Ubuntu 24.04 LTS (x86_64)
+
+set -Eeuo pipefail
+
+# Resolve script physical path (handling symlinks)
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+    DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+BIN_DIR="$( cd -P "$( dirname "$SOURCE" )" >/dev/null 2>&1 && pwd )"
+INSTALLER_DIR="$(cd "${BIN_DIR}/.." && pwd)"
+HERMES_DIR="$(cd "${INSTALLER_DIR}/.." && pwd)"
+
+# Ensure execution context is in the Hermes source root
+cd "$HERMES_DIR"
+
+# Sourcing logging library (provides color variables)
+source "${INSTALLER_DIR}/lib/logging.sh"
+
+LOCKFILE="/tmp/hermes_installer.lock"
+
+acquire_lock() {
+    if [ -e "$LOCKFILE" ]; then
+        local pid
+        pid=$(cat "$LOCKFILE" 2>/dev/null || echo "")
+        if [ -n "$pid" ] && ps -p "$pid" &>/dev/null; then
+            echo -e "${RED}✗ Error: Another Hermes install or repair operation (PID $pid) is running.${NC}" >&2
+            exit 1
+        else
+            rm -f "$LOCKFILE"
+        fi
+    fi
+    echo "$$" > "$LOCKFILE"
+}
+
+release_lock() {
+    rm -f "$LOCKFILE"
+}
+
+show_about_info() {
+    local version=$(cat "${INSTALLER_DIR}/VERSION" 2>/dev/null || echo "1.0.0")
+    local git_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "not-git")
+    local laravel_ver=$(docker compose exec -T app php artisan --version 2>/dev/null || echo "Offline")
+    local php_ver=$(docker compose exec -T app php -r 'echo PHP_VERSION;' 2>/dev/null || echo "Offline")
+    local pg_ver=$(docker compose exec -T db psql --version 2>/dev/null | head -n1 || echo "Offline")
+    local redis_ver=$(docker compose exec -T redis redis-server --version 2>/dev/null | awk '{print $3}' || echo "Offline")
+    local profile=$(grep "^APP_PROFILE=" .env 2>/dev/null | cut -d'=' -f2- | tr -d '\r\n"' || echo "Unknown")
+
+    echo -e "${BLUE}====================================================${NC}"
+    echo -e "${BLUE}          Hermes AI Platform Specifications         ${NC}"
+    echo -e "${BLUE}====================================================${NC}"
+    echo -e "  CLI Version:        ${GREEN}v${version}${NC}"
+    echo -e "  Platform Version:   ${GREEN}v${version}${NC}"
+    echo -e "  Laravel Core:       ${GREEN}${laravel_ver}${NC}"
+    echo -e "  PHP Runtime:        ${GREEN}v${php_ver}${NC}"
+    echo -e "  Docker Server:      ${GREEN}$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "Unknown")${NC}"
+    echo -e "  Docker Compose:     ${GREEN}$(docker compose version --short 2>/dev/null || echo "Unknown")${NC}"
+    echo -e "  PostgreSQL Server:  ${GREEN}${pg_ver}${NC}"
+    echo -e "  Redis Cache Store:  ${GREEN}${redis_ver}${NC}"
+    echo -e "  Git Commit Hash:    ${GREEN}${git_commit}${NC}"
+    echo -e "  Installation Profile:${GREEN}${profile}${NC}"
+    echo -e "${BLUE}====================================================${NC}"
+}
+
+enter_container_shell() {
+    local target=${1:-"app"}
+    
+    if [ "$target" = "postgres" ] || [ "$target" = "db" ]; then
+        if [ -f .env ]; then
+            local db_user=$(grep "^DB_USERNAME=" .env | cut -d'=' -f2- | tr -d '\r\n"' || echo "hermes")
+            local db_name=$(grep "^DB_DATABASE=" .env | cut -d'=' -f2- | tr -d '\r\n"' || echo "hermes")
+            local db_pass=$(grep "^DB_PASSWORD=" .env | cut -d'=' -f2- | tr -d '\r\n"' || echo "")
+            echo -e "${YELLOW}Entering PostgreSQL CLI console...${NC}"
+            docker compose exec -it -e PGPASSWORD="$db_pass" db psql -U "$db_user" -d "$db_name"
+        else
+            docker compose exec -it db sh
+        fi
+    elif [ "$target" = "redis" ]; then
+        if [ -f .env ]; then
+            local redis_pass=$(grep "^REDIS_PASSWORD=" .env | cut -d'=' -f2- | tr -d '\r\n"' || echo "")
+            echo -e "${YELLOW}Entering Redis CLI console...${NC}"
+            if [ -n "$redis_pass" ]; then
+                docker compose exec -it redis redis-cli -a "$redis_pass"
+            else
+                docker compose exec -it redis redis-cli
+            fi
+        else
+            docker compose exec -it redis redis-cli
+        fi
+    elif [ "$target" = "qdrant" ] || [ "$target" = "minio" ]; then
+        echo -e "${YELLOW}Logging into container shell for '$target'...${NC}"
+        docker compose exec -it "$target" sh
+    else
+        echo -e "${YELLOW}Logging into primary app container shell (bash)...${NC}"
+        docker compose exec -it --user www-data app bash || docker compose exec -it app sh
+    fi
+}
+
+run_artisan() {
+    local t_flag="-it"
+    if [ ! -t 0 ] || [ ! -t 1 ]; then t_flag="-T"; fi
+    docker compose exec $t_flag --user www-data app php artisan "$@"
+}
+
+run_composer() {
+    local t_flag="-it"
+    if [ ! -t 0 ] || [ ! -t 1 ]; then t_flag="-T"; fi
+    docker compose exec $t_flag --user www-data app composer "$@"
+}
+
+run_npm() {
+    local t_flag="-it"
+    if [ ! -t 0 ] || [ ! -t 1 ]; then t_flag="-T"; fi
+    if docker compose exec $t_flag app command -v npm &>/dev/null; then
+        docker compose exec $t_flag app npm "$@"
+    else
+        if command -v npm &>/dev/null; then
+            npm "$@"
+        else
+            echo -e "${RED}✗ Error: npm is not available inside container or on the host.${NC}" >&2
+            exit 1
+        fi
+    fi
+}
+
+manage_caches() {
+    local action=${1:-"optimize"}
+    case "$action" in
+        clear)
+            echo -e "${YELLOW}Clearing all application cache drivers...${NC}"
+            run_artisan config:clear
+            run_artisan route:clear
+            run_artisan view:clear
+            run_artisan cache:clear
+            run_artisan event:clear
+            run_artisan optimize:clear
+            ;;
+        optimize)
+            echo -e "${YELLOW}Compiling caching lists...${NC}"
+            run_artisan optimize
+            ;;
+        rebuild)
+            echo -e "${YELLOW}Rebuilding all system caches...${NC}"
+            run_artisan optimize:clear
+            run_artisan optimize
+            run_artisan config:cache
+            run_artisan route:cache
+            run_artisan view:cache
+            ;;
+        *)
+            echo "Usage: hermes cache [clear|optimize|rebuild]"
+            exit 1
+            ;;
+    esac
+}
+
+generate_all_docs() {
+    echo -e "${YELLOW}Generating markdown operations documentation files...${NC}"
+    
+    # 1. COMMANDS.md
+    cat <<'EOF' > COMMANDS.md
+# Hermes CLI Command Guide
+
+Detailed usage instructions for the unified platform CLI.
+
+## Commands Reference
+
+- **`hermes version`** / **`hermes about`**: Displays platforms build specs.
+- **`hermes status`**: Displays CPU/RAM/Disk stats and active container health.
+- **`hermes shell [service]`**: Log in to app, db, redis, qdrant, or minio.
+- **`hermes artisan <cmd>`**: Wrapper executing php artisan commands in FPM app.
+- **`hermes composer <cmd>`**: Wrapper executing composer inside app container.
+- **`hermes npm <cmd>`**: Wrapper executing npm builds.
+- **`hermes cache [clear|optimize|rebuild]`**: Laravel caches controls.
+- **`hermes ai [test|chat|models|providers|embeddings|index|reindex|documents|prompt-test|benchmark]`**: AI integrations manager.
+- **`hermes knowledge [import|export|rebuild|clean|statistics|search]`**: Knowledge base vectors controller.
+- **`hermes backup [create|list|restore|verify|delete|schedule]`**: Archives databases and volume storages.
+- **`hermes config`**: Interactive wizard credentials compiler.
+- **`hermes module [list|enable|disable|install|remove|update]`**: Extension registry switches.
+- **`hermes provider [list|switch|test|benchmark]`**: active LLM models driver switches.
+- **`hermes doctor`**: Audits system ports, queries, and permissions.
+- **`hermes repair`**: Fixes directories permissions, cache configurations, and queue states.
+- **`hermes self-update`**: Pulls latest scripts without touching credentials.
+- **`hermes test`**: Runs ShellCheck linters.
+EOF
+
+    # 2. CLI.md
+    cat <<'EOF' > CLI.md
+# Hermes Command Line Interface (CLI)
+
+The `hermes` CLI is the unified operational wrapper for developer and administrator scripts.
+
+## Setup CLI globally
+
+Execute the following link command to register the script:
+```bash
+./installer/bin/hermes link
+```
+Once linked, run commands from any path on the server:
+```bash
+hermes doctor
+hermes status
+hermes logs queue
+```
+EOF
+
+    # 3. MODULES.md
+    cat <<'EOF' > MODULES.md
+# Hermes Module System
+
+Hermes features an extensible design supporting registration of module packages:
+
+## Supported Modules
+- **CRM**: Customer Relationships Manager
+- **Sales**: Sales Pipeline
+- **Academy**: LSPL Training modules
+- **Voice**: Call and text engines
+- **WhatsApp**: Webhook channels
+- **HR**: Team directory
+- **Finance**: Bills and receipts tracker
+- **Support**: Ticketing system
+- **Knowledge**: Knowledge assets database
+- **Analytics**: Statistics dashboard
+
+## Commands
+- `hermes module list`
+- `hermes module enable <mod>`
+- `hermes module disable <mod>`
+- `hermes module install <mod>`
+EOF
+
+    # 4. AI.md
+    cat <<'EOF' > AI.md
+# Hermes AI Administration Guide
+
+Administration commands for AI integrations and LLMs.
+
+## Commands
+- `hermes ai test`: Connectivity probes to OpenAI, Gemini, Ollama, etc.
+- `hermes ai chat`: Interactive chat shell in the console.
+- `hermes ai models`: Lists models available for active driver.
+- `hermes ai providers`: Display active LLM/Embedding configuration drivers.
+- `hermes ai embeddings <text>`: Tests vector dimension generation.
+- `hermes ai index`: Re-scouts all document assets.
+- `hermes ai prompt-test <prompt>`: Measures response latencies.
+- `hermes ai benchmark`: Tests tokens-per-second output speeds.
+EOF
+
+    log_info "Documentation files created/updated successfully: COMMANDS.md, CLI.md, MODULES.md, AI.md."
+}
+
+show_help() {
+    local version=$(cat "${INSTALLER_DIR}/VERSION" 2>/dev/null || echo "1.0.0")
+    echo -e "${BLUE}====================================================${NC}"
+    echo -e "${BLUE}         Hermes Developer Platform CLI v${version}      ${NC}"
+    echo -e "${BLUE}====================================================${NC}"
+    echo -e "Usage: ${GREEN}hermes${NC} <command> [arguments]"
+    echo ""
+    echo -e "DevOps & Installer Commands:"
+    echo -e "  ${GREEN}install${NC}           Launch interactive installation wizard"
+    echo -e "  ${GREEN}doctor${NC}            Run diagnostics pre-flight/health checks"
+    echo -e "  ${GREEN}repair${NC}            Automate permissions and container repairs"
+    echo -e "  ${GREEN}upgrade${NC}           Fetch updates and upgrade platform"
+    echo -e "  ${GREEN}status${NC}            Render rich CPU/RAM/services health metrics"
+    echo -e "  ${GREEN}self-update${NC}       Update CLI scripts (keeps database intact)"
+    echo -e "  ${GREEN}test${NC}              Execute ShellCheck testing linters"
+    echo -e "  ${GREEN}docs${NC}              Generate CLI.md, COMMANDS.md, MODULES.md, AI.md"
+    echo ""
+    echo -e "Developer Containers Wrappers:"
+    echo -e "  ${GREEN}shell${NC} [service]   Enter shell for app, db, redis, or vector DBs"
+    echo -e "  ${GREEN}artisan${NC} <cmd>     Execute Laravel Artisan commands inside container"
+    echo -e "  ${GREEN}composer${NC} <cmd>    Execute Composer commands inside container"
+    echo -e "  ${GREEN}npm${NC} <cmd>         Execute NPM node tasks inside container"
+    echo -e "  ${GREEN}cache${NC} <option>     Clear, optimize, or rebuild route/config caches"
+    echo ""
+    echo -e "Operations Management Namespaces:"
+    echo -e "  ${GREEN}ai${NC} <subcommand>   AI drivers models and completions checks"
+    echo -e "  ${GREEN}knowledge${NC} <sub..> Import, index, and statistics for vector assets"
+    echo -e "  ${GREEN}backup${NC} <subcmd>   Manual backups, schedules, and integrity verifies"
+    echo -e "  ${GREEN}config${NC}            Interactive configuration wizard editor"
+    echo -e "  ${GREEN}module${NC} <subcmd>   Install, list, enable, or disable extensions"
+    echo -e "  ${GREEN}provider${NC} <subcmd> Switch active default LLM drivers"
+    echo ""
+    echo -e "Docker Compose Shortcuts:"
+    echo -e "  ${GREEN}ps / logs / restart / start / stop / up / down / pull / prune${NC}"
+    echo -e "  ${GREEN}link${NC}              Link CLI globally to /usr/local/bin/hermes"
+    echo -e "${BLUE}====================================================${NC}"
+}
+
+link_globally() {
+    echo -e "${YELLOW}Registering CLI globally in /usr/local/bin/hermes...${NC}"
+    if sudo ln -sf "$BIN_DIR/hermes" /usr/local/bin/hermes; then
+        echo -e "${GREEN}✓ CLI Registered globally! Run 'hermes' anywhere on your system.${NC}"
+    else
+        echo -e "${RED}✗ Error: Failed to link globally. Run with sudo privileges.${NC}" >&2
+        exit 1
+    fi
+}
+
+COMMAND=${1:-""}
+if [ -n "$COMMAND" ]; then
+    shift
+fi
+
+case "$COMMAND" in
+    # 1. Version & Metadata
+    version)
+        cat "${INSTALLER_DIR}/VERSION" 2>/dev/null || echo "1.0.0"
+        ;;
+    about)
+        show_about_info
+        ;;
+        
+    # 2. Rich status
+    status)
+        bash "${INSTALLER_DIR}/scripts/status_dashboard.sh"
+        ;;
+        
+    # 3. Shell helper
+    shell)
+        enter_container_shell "${1:-}"
+        ;;
+        
+    # 4. Laravel Artisan Wrapper
+    artisan)
+        run_artisan "$@"
+        ;;
+        
+    # 5. Composer Wrapper
+    composer)
+        run_composer "$@"
+        ;;
+        
+    # 6. NPM wrapper
+    npm)
+        run_npm "$@"
+        ;;
+        
+    # 7. Cache operations
+    cache)
+        manage_caches "${1:-}"
+        ;;
+        
+    # 8. Namespaces delegations
+    ai)
+        bash "${INSTALLER_DIR}/scripts/ai.sh" "$@"
+        ;;
+    knowledge)
+        bash "${INSTALLER_DIR}/scripts/knowledge.sh" "$@"
+        ;;
+    backup)
+        bash "${INSTALLER_DIR}/scripts/backup_manager.sh" "$@"
+        ;;
+    config)
+        bash "${INSTALLER_DIR}/scripts/update.sh" "$@"
+        ;;
+    module)
+        bash "${INSTALLER_DIR}/scripts/module.sh" "$@"
+        ;;
+    provider)
+        bash "${INSTALLER_DIR}/scripts/provider.sh" "$@"
+        ;;
+        
+    # 9. Core operational scripts
+    install)
+        acquire_lock
+        trap release_lock EXIT
+        bash "${INSTALLER_DIR}/scripts/install.sh" "$@"
+        ;;
+    doctor)
+        bash "${INSTALLER_DIR}/scripts/doctor.sh" "$@"
+        ;;
+    repair)
+        acquire_lock
+        trap release_lock EXIT
+        bash "${INSTALLER_DIR}/scripts/repair.sh" "$@"
+        ;;
+    upgrade)
+        acquire_lock
+        trap release_lock EXIT
+        bash "${INSTALLER_DIR}/scripts/upgrade.sh" "$@"
+        ;;
+    self-update)
+        bash "${INSTALLER_DIR}/scripts/self_update.sh" "$@"
+        ;;
+    test)
+        bash "${INSTALLER_DIR}/scripts/test_runner.sh" "$@"
+        ;;
+    docs)
+        generate_all_docs
+        ;;
+        
+    # 10. Docker shortcuts
+    ps)
+        docker compose ps
+        ;;
+    up)
+        docker compose up -d "$@"
+        ;;
+    down)
+        docker compose down "$@"
+        ;;
+    restart)
+        docker compose restart "$@"
+        ;;
+    rebuild)
+        docker compose up -d --build "$@"
+        ;;
+    pull)
+        docker compose pull "$@"
+        ;;
+    prune)
+        docker system prune -f
+        ;;
+    images)
+        docker compose images
+        ;;
+    volumes)
+        docker volume ls
+        ;;
+    networks)
+        docker network ls
+        ;;
+        
+    # 11. Links
+    link)
+        link_globally
+        ;;
+    help|-h|--help|"")
+        show_help
+        ;;
+    *)
+        echo -e "${RED}Unknown command: $COMMAND${NC}" >&2
+        show_help
+        exit 1
+        ;;
+esac
