@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y \
     libicu-dev \
     supervisor \
     cron \
+    procps \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Configure GD extension

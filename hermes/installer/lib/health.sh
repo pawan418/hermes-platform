@@ -140,7 +140,7 @@ run_deep_diagnostics() {
 
     # 7. Queue worker checks
     local queue_active
-    queue_active=$(docker compose exec -T queue ps aux | grep -v grep | grep -c "queue:work" || echo "0")
+    queue_active=$(docker compose exec -T queue ps aux | grep -v grep | grep -c "queue:work" || true)
     if [ "$queue_active" -gt 0 ]; then
         audit_health_status "Queue Processor" "ok" "Active workers: $queue_active"
     else
@@ -150,7 +150,7 @@ run_deep_diagnostics() {
 
     # 8. Scheduler checks
     local scheduler_active
-    scheduler_active=$(docker compose exec -T scheduler ps aux | grep -v grep | grep -c "schedule:work" || echo "0")
+    scheduler_active=$(docker compose exec -T scheduler ps aux | grep -v grep | grep -c "schedule:work" || true)
     if [ "$scheduler_active" -gt 0 ]; then
         audit_health_status "Cron Scheduler" "ok" "Scheduler daemon running"
     else
