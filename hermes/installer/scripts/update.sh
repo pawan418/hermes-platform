@@ -162,9 +162,9 @@ while true; do
             docker compose exec -T --user www-data app php artisan queue:restart
             
             # Send test mail if SMTP is configured
-            local has_smtp=$(get_env_val "MAIL_PASSWORD")
+            has_smtp=$(get_env_val "MAIL_PASSWORD")
             if [ -n "$has_smtp" ]; then
-                local mail_to=$(get_env_val "MAIL_FROM_ADDRESS")
+                mail_to=$(get_env_val "MAIL_FROM_ADDRESS")
                 log_info "Testing SMTP outbound..." "$LOG_FILE"
                 if docker compose exec -T --user www-data app php artisan hermes:test-smtp --to="$mail_to"; then
                     log_info "SMTP connection test succeeded." "$LOG_FILE"

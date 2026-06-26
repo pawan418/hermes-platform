@@ -43,7 +43,7 @@ trap rollback_on_repair_failure EXIT
 
 # 2. Reset permissions
 log_info "Resetting filesystem directory and file permissions..." "$LOG_FILE"
-local dirs=(storage bootstrap/cache uploads knowledge logs)
+dirs=(storage bootstrap/cache uploads knowledge logs)
 for dir in "${dirs[@]}"; do
     if [ ! -d "$dir" ]; then
         mkdir -p "$dir"

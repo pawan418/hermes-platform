@@ -109,7 +109,6 @@ rm -f "$pre_mig_backup"
 
 # 8. Optimized caches matching profile
 log_info "Rebuilding Laravel caching files..." "$LOG_FILE"
-local app_profile
 app_profile=$(grep "^APP_PROFILE=" .env | cut -d'=' -f2- | tr -d '\r\n"' || echo "production")
 if [ "$app_profile" = "development" ]; then
     docker compose exec -T --user www-data app php artisan optimize:clear >> "$LOG_FILE" 2>&1 || true
