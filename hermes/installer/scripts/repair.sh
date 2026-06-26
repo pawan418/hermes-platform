@@ -74,6 +74,16 @@ log_info "Rebuilding and starting container infrastructure..." "$LOG_FILE"
 docker compose up -d >> "$LOG_FILE" 2>&1
 log_info "Containers started." "$LOG_FILE"
 
+# 3.5. Verify PHP dependencies
+log_info "Verifying PHP dependencies installation state..." "$LOG_FILE"
+if [ ! -d "vendor" ]; then
+    log_info "Vendor folder missing. Installing Composer packages..." "$LOG_FILE"
+    docker compose exec -T --user root app composer install --no-interaction --optimize-autoloader >> "$LOG_FILE" 2>&1
+else
+    log_info "Vendor folder exists. Rebuilding autoload files..." "$LOG_FILE"
+    docker compose exec -T --user root app composer dump-autoload --no-interaction --optimize >> "$LOG_FILE" 2>&1
+fi
+
 # 4. Laravel optimizations
 log_info "Rebuilding and optimizing Laravel caching configurations..." "$LOG_FILE"
 docker compose exec -T --user www-data app php artisan optimize:clear >> "$LOG_FILE" 2>&1 || true
