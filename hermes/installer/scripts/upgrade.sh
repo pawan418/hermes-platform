@@ -74,6 +74,7 @@ docker compose pull >> "$LOG_FILE" 2>&1
 log_info "Building custom application images (PHP container)..." "$LOG_FILE"
 docker compose build --pull >> "$LOG_FILE" 2>&1
 docker compose up -d >> "$LOG_FILE" 2>&1
+docker compose restart web >> "$LOG_FILE" 2>&1 || true
 
 # 6. PHP Dependencies check (smart composer)
 log_info "Verifying dependencies installation..." "$LOG_FILE"

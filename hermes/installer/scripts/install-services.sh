@@ -62,6 +62,7 @@ build_and_start_containers() {
     
     log_info "Starting all application services..." "$LOG_FILE"
     docker compose up -d >> "$DOCKER_LOG" 2>&1
+    docker compose restart web >> "$DOCKER_LOG" 2>&1 || true
     
     log_info "All containers initialized." "$LOG_FILE"
 }

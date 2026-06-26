@@ -72,6 +72,7 @@ log_info "Permissions verified." "$LOG_FILE"
 # 3. Reload containers
 log_info "Rebuilding and starting container infrastructure..." "$LOG_FILE"
 docker compose up -d >> "$LOG_FILE" 2>&1
+docker compose restart web >> "$LOG_FILE" 2>&1 || true
 log_info "Containers started." "$LOG_FILE"
 
 # 3.5. Verify PHP dependencies
