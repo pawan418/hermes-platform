@@ -100,14 +100,9 @@ services:
       - hermes-qdrant:/qdrant/storage
     networks:
       - hermes-network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:6333/collections || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2024-09-22T00-33-43Z-cpuv1
     container_name: hermes-minio
     restart: unless-stopped
     environment:
@@ -142,12 +137,6 @@ services:
       - hermes-n8n:/home/node/.n8n
     networks:
       - hermes-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5678/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
     depends_on:
       - db
       - redis
