@@ -32,9 +32,9 @@ class AdminPanelProvider extends PanelProvider
                 'primary' => Color::Indigo,
                 'gray' => Color::Slate,
             ])
-            ->discoverResources(in: app_path('Filament/Resources'), by: 'App\\Filament\\Resources')
-            ->discoverPages(in: app_path('Filament/Pages'), by: 'App\\Filament\\Pages')
-            ->discoverWidgets(in: app_path('Filament/Widgets'), by: 'App\\Filament\\Widgets')
+            ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
+            ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
+            ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
@@ -59,17 +59,17 @@ class AdminPanelProvider extends PanelProvider
                 
                 $resourcesPath = $module . '/Filament/Resources';
                 if (File::isDirectory($resourcesPath)) {
-                    $panel->discoverResources(in: $resourcesPath, by: "App\\Modules\\{$moduleName}\\Filament\\Resources");
+                    $panel->discoverResources(in: $resourcesPath, for: "App\\Modules\\{$moduleName}\\Filament\\Resources");
                 }
                 
                 $pagesPath = $module . '/Filament/Pages';
                 if (File::isDirectory($pagesPath)) {
-                    $panel->discoverPages(in: $pagesPath, by: "App\\Modules\\{$moduleName}\\Filament\\Pages");
+                    $panel->discoverPages(in: $pagesPath, for: "App\\Modules\\{$moduleName}\\Filament\\Pages");
                 }
                 
                 $widgetsPath = $module . '/Filament/Widgets';
                 if (File::isDirectory($widgetsPath)) {
-                    $panel->discoverWidgets(in: $widgetsPath, by: "App\\Modules\\{$moduleName}\\Filament\\Widgets");
+                    $panel->discoverWidgets(in: $widgetsPath, for: "App\\Modules\\{$moduleName}\\Filament\\Widgets");
                 }
             }
         }
