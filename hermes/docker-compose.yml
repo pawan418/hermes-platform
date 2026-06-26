@@ -25,6 +25,7 @@ services:
       - CACHE_STORE=redis
       - QUEUE_CONNECTION=redis
       - SESSION_DRIVER=redis
+      - COMPOSER_HTTP_2=0
     networks:
       - hermes-network
     depends_on:
