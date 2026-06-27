@@ -119,7 +119,7 @@ validate_docker_setup() {
     if [ -f docker-compose.yml ]; then
         log_info "Checking Docker volumes and networks configuration..." "$log_file"
         local proj_name
-        proj_name=$(docker compose project name 2>/dev/null || echo "hermes")
+        proj_name=$(docker compose config 2>/dev/null | grep -E "^name:" | head -n1 | awk '{print $2}' | tr -d '\r\n"' || echo "hermes")
         if ! docker network inspect "${proj_name}_hermes-network" &>/dev/null && ! docker network inspect "hermes-network" &>/dev/null; then
             log_warn "Standard Hermes network is missing. Service scripts will create it." "$log_file"
         fi

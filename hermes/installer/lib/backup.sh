@@ -8,7 +8,12 @@ source "${LIB_DIR}/logging.sh"
 
 # Get Docker Compose project name dynamically
 get_compose_project_name() {
-    docker compose project name 2>/dev/null || basename "$(pwd)" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-'
+    local name
+    name=$(docker compose config 2>/dev/null | grep -E "^name:" | head -n1 | awk '{print $2}' | tr -d '\r\n"' || echo "")
+    if [ -z "$name" ]; then
+        name=$(basename "$(pwd)" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
+    fi
+    echo "$name"
 }
 
 # Dump PostgreSQL Database

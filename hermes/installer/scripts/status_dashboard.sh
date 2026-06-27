@@ -48,7 +48,7 @@ check_container_health() {
     local cid
     cid=$(docker compose ps -q "$service" 2>/dev/null | head -n1 || true)
     if [ -n "$cid" ]; then
-        docker inspect --format='{{json .State.Health.Status}}' "$cid" 2>/dev/null | tr -d '"' || echo "none"
+        docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || echo "none"
     else
         echo "offline"
     fi
