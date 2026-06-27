@@ -16,6 +16,30 @@ LOG_FILE="logs/upgrade.log"
 touch "$LOG_FILE"
 chmod 600 "$LOG_FILE"
 
+setup_filesystem_permissions() {
+    log_info "Verifying and configuring filesystem permissions..." "$LOG_FILE"
+    local dirs=(
+        storage
+        storage/framework/cache
+        storage/framework/sessions
+        storage/framework/views
+        storage/logs
+        bootstrap/cache
+        uploads
+        knowledge
+        logs
+    )
+    for dir in "${dirs[@]}"; do
+        if [ ! -d "$dir" ]; then
+            mkdir -p "$dir"
+        fi
+        chmod -R 775 "$dir" >> "$LOG_FILE" 2>&1 || true
+        if getent group www-data &>/dev/null; then
+            sudo chown -R :www-data "$dir" >> "$LOG_FILE" 2>&1 || true
+        fi
+    done
+}
+
 echo -e "${BLUE}====================================================${NC}"
 echo -e "${BLUE}         Hermes Platform Upgrade Engine             ${NC}"
 echo -e "${BLUE}====================================================${NC}"
@@ -75,16 +99,18 @@ log_info "Building custom application images (PHP container)..." "$LOG_FILE"
 docker compose build --pull >> "$LOG_FILE" 2>&1
 docker compose up -d >> "$LOG_FILE" 2>&1
 docker compose restart web >> "$LOG_FILE" 2>&1 || true
+setup_filesystem_permissions
 
 # 6. PHP Dependencies check (smart composer)
 log_info "Verifying dependencies installation..." "$LOG_FILE"
 if [ ! -d "vendor" ]; then
     log_info "Vendor folder missing. Installing Composer packages..." "$LOG_FILE"
     docker compose exec -T --user root app composer install --no-interaction --optimize-autoloader >> "$LOG_FILE" 2>&1
+    setup_filesystem_permissions
 else
     log_info "Vendor folder exists. Executing autoloader optimizations..." "$LOG_FILE"
     docker compose exec -T --user root app composer dump-autoload --no-interaction --optimize >> "$LOG_FILE" 2>&1
-    docker compose exec -T --user www-data app php artisan optimize --no-interaction >> "$LOG_FILE" 2>&1
+    setup_filesystem_permissions
 fi
 
 # 7. Database migrations
@@ -110,14 +136,15 @@ rm -f "$pre_mig_backup"
 
 # 8. Optimized caches matching profile
 log_info "Rebuilding Laravel caching files..." "$LOG_FILE"
+setup_filesystem_permissions
 app_profile=$(grep "^APP_PROFILE=" .env | cut -d'=' -f2- | tr -d '\r\n"' || echo "production")
 if [ "$app_profile" = "development" ]; then
     docker compose exec -T --user www-data app php artisan optimize:clear >> "$LOG_FILE" 2>&1 || true
 else
-    docker compose exec -T --user www-data app php artisan optimize >> "$LOG_FILE" 2>&1
-    docker compose exec -T --user www-data app php artisan config:cache >> "$LOG_FILE" 2>&1
-    docker compose exec -T --user www-data app php artisan route:cache >> "$LOG_FILE" 2>&1
-    docker compose exec -T --user www-data app php artisan view:cache >> "$LOG_FILE" 2>&1
+    docker compose exec -T --user www-data app php artisan optimize >> "$LOG_FILE" 2>&1 || true
+    docker compose exec -T --user www-data app php artisan config:cache >> "$LOG_FILE" 2>&1 || true
+    docker compose exec -T --user www-data app php artisan route:cache >> "$LOG_FILE" 2>&1 || true
+    docker compose exec -T --user www-data app php artisan view:cache >> "$LOG_FILE" 2>&1 || true
 fi
 docker compose exec -T --user www-data app php artisan queue:restart >> "$LOG_FILE" 2>&1
 
